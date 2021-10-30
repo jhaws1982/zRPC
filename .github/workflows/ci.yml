@@ -1,4 +1,4 @@
-name: C/C++ CI
+name: CI
 
 on: [push]
 
@@ -6,6 +6,8 @@ jobs:
   ubuntu-build:
     runs-on: ubuntu-latest
     steps:
+    - name: Install dependencies
+      run: sudo apt install libmq5 libmq3-dev
     - name: Checkout
       uses: actions/checkout@v2.0.0
     - name: Build project
