@@ -33,3 +33,6 @@ _bld
 *.exe
 *.out
 *.app
+
+# Other stuff
+.VSCodeCounter
