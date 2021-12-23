@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Install dependencies
-      run: sudo apt-get install libzmq5 libzmq3-dev
+      run: sudo apt-get install libzmq5 libzmq3-dev libboost-all-dev
     - name: Checkout
       uses: actions/checkout@v2.0.0
     - name: Build project
