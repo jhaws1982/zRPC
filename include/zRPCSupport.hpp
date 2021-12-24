@@ -56,6 +56,9 @@ struct callable_traits<R (NS::*)(A...) const> : callable_traits<R (*)(A...)>
 {
 };
 
+/**
+ * @brief Define type for void and non-void return type callables.
+ */
 struct nonvoid_rtn
 {
 };
@@ -77,8 +80,8 @@ struct rtn<void>
  * @brief Specialization to extract information about the return type, number of
  * arguments, and type of arguments
  *
- * @tparam R Return type of the function
- * @tparam A Function arguments
+ * @tparam R Return type of the functor
+ * @tparam A Functor arguments
  */
 template <typename R, typename... A>
 struct callable_traits<R (*)(A...)>
@@ -129,7 +132,7 @@ using typeArgs = callable_traits<F>::type_args;
  * @tparam Args Arguments to the callable functor
  * @tparam I Index sequence into the tuple
  * @param func Functor to call
- * @param params Forwarded variadic arguments to the function
+ * @param params Forwarded variadic arguments to the functor
  * @return decltype(auto) Auto-detected return value of the functor
  */
 template <typename F, typename... Args, std::size_t... I>
@@ -146,7 +149,7 @@ decltype(auto) call_detail(F func,
  * @tparam F Callable type to bind (auto-detected by compiler)
  * @tparam Args Arguments to the callable functor
  * @param func Functor to call
- * @param args Variadic arguments to the function
+ * @param args Variadic arguments to the functor
  * @return decltype(auto) Auto-detected return value of the functor
  */
 template <typename F, typename... Args>

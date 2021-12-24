@@ -58,8 +58,6 @@ void zRPCServer::insertFunc(const std::string &name,
           " arguments; expected " + std::to_string(expected_args));
     }
 
-    /// @todo Ensure types of arguments match
-
     // Call the function
     typename support::typeArgs<F> realArgs;
     args.convert(realArgs);
@@ -95,8 +93,6 @@ void zRPCServer::insertFunc(const std::string &name,
           "Function " + name + " called with " + std::to_string(called_args) +
           " arguments; expected " + std::to_string(expected_args));
     }
-
-    /// @todo Ensure types of arguments match
 
     // Call the function
     typename support::typeArgs<F> realArgs;

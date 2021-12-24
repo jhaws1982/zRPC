@@ -35,11 +35,11 @@ msgpack::object_handle zRPCClient::call(const std::string &name, A... args)
   try
   {
     // Ensure socket is connected to the server
-    zmq::socket_t m_sock(m_cxt, ZMQ_DEALER);
-    m_sock.set(zmq::sockopt::routing_id, m_idBase + std::to_string(m_idx++));
-    m_sock.connect(m_uri);
+    zmq::socket_t l_sock(m_cxt, ZMQ_DEALER);
+    l_sock.set(zmq::sockopt::routing_id, m_idBase + std::to_string(m_idx++));
+    l_sock.connect(m_uri);
 
-    if (m_sock)
+    if (l_sock)
     {
       // Create a tuple with the RPC name and arguments
       auto args_tuple = std::make_tuple(args...);
@@ -48,15 +48,14 @@ msgpack::object_handle zRPCClient::call(const std::string &name, A... args)
       // Pack the tuple into an object and send to the server
       auto sbuf = std::make_shared<msgpack::sbuffer>();
       msgpack::pack(*sbuf, call_tuple);
-      m_sock.send(zmq::const_buffer(sbuf->data(), sbuf->size()));
+      (void)l_sock.send(zmq::const_buffer(sbuf->data(), sbuf->size()));
 
       // Wait for response
-      zmq::message_t zmqobj;
-      auto rxres = m_sock.recv(zmqobj);
+      zmq::message_t msg;
+      auto rxres = l_sock.recv(msg);
       if (rxres && (rxres.value() > 0))
       {
-        auto obj =
-            msgpack::unpack(static_cast<char *>(zmqobj.data()), zmqobj.size());
+        auto obj = msgpack::unpack(static_cast<char *>(msg.data()), msg.size());
         return obj;
       }
     }

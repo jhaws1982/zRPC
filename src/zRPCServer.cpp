@@ -25,8 +25,9 @@
  * SOFTWARE.
  */
 
-#include <iostream>
 #include "zRPC.hpp"
+
+#include <iostream>
 
 using namespace zRPC;
 
@@ -39,14 +40,14 @@ zRPCServer::zRPCServer(const std::string &address,
                        const uint16_t port,
                        const uint32_t nWorkers) :
     m_cxt(16),
-    m_brokerFront(m_cxt, ZMQ_ROUTER),
-    m_brokerBack(m_cxt, ZMQ_DEALER)
+    m_brokerFrontend(m_cxt, ZMQ_ROUTER),
+    m_brokerBackend(m_cxt, ZMQ_DEALER)
 {
   try
   {
     // Start the broker sockets and bind to their ports
-    m_brokerFront.bind(address + ":" + std::to_string(port));
-    m_brokerBack.bind("inproc://backend");
+    m_brokerFrontend.bind(address + ":" + std::to_string(port));
+    m_brokerBackend.bind("inproc://backend");
   }
   catch (const zmq::error_t &e)
   {
@@ -65,7 +66,7 @@ void zRPCServer::start(void)
   // Start the proxy to connect multiple clients to multiple workers
   try
   {
-    zmq::proxy(m_brokerFront, m_brokerBack);
+    zmq::proxy(m_brokerFrontend, m_brokerBackend);
   }
   catch (const zmq::error_t &e)
   {
@@ -100,13 +101,13 @@ void zRPCServer::worker(void)
       // Reply with the identity of the message for the broker
       zmq::message_t copied_id;
       copied_id.copy(identity);
-      sock.send(copied_id, zmq::send_flags::sndmore);
+      (void)sock.send(copied_id, zmq::send_flags::sndmore);
 
       // Pack the result into an object
       auto sbuf = std::make_shared<msgpack::sbuffer>();
       msgpack::pack(*sbuf, res->get());
-      sock.send(zmq::const_buffer(sbuf->data(), sbuf->size()),
-                zmq::send_flags::none);
+      (void)sock.send(zmq::const_buffer(sbuf->data(), sbuf->size()),
+                      zmq::send_flags::none);
     }
   }
   catch (const zmq::error_t &e)

@@ -68,18 +68,21 @@ private:
   /**
    * @brief Zero-MQ RPC broker front-end socket (ROUTER)
    */
-  zmq::socket_t m_brokerFront;
+  zmq::socket_t m_brokerFrontend;
 
   /**
    * @brief Zero-MQ RPC broker back-end socket (DEALER)
    */
-  zmq::socket_t m_brokerBack;
+  zmq::socket_t m_brokerBackend;
 
   /**
-   * @brief Thread handler for main server thread
+   * @brief Vector of thread handler for main worker threads
    */
   std::vector<std::thread> m_th;
 
+  /**
+   * @brief Worker thread function
+   */
   void worker(void);
 
 public:
@@ -100,14 +103,9 @@ public:
    * @param[in] port Port to listen on
    * @param nWorkers[in] Number of worker threads to create, default = 16
    */
-  zRPCServer(const std::string &address,
-             const uint16_t port,
-             const uint32_t nWorkers = 16U);
-
-  /**
-   * @brief Destroy the zRPCServer object and cleanly close down all 0MQ sockets
-   */
-  // ~zRPCServer() = default;
+  explicit zRPCServer(const std::string &address,
+                      const uint16_t port,
+                      const uint32_t nWorkers = 16U);
 
   /**
    * @brief Start listening for client connections and setup worker pool
@@ -124,6 +122,7 @@ public:
   template <typename F>
   void bind(const std::string &name, F func);
 
+private:
   /**
    * @brief Insert non-void returning function into RPC map
    *
@@ -184,9 +183,9 @@ public:
    * @param address Address of the server to connect to.
    * @param port Port of the server to connect to.
    */
-  zRPCClient(const std::string &identity,
-             const std::string &address,
-             const uint16_t port);
+  explicit zRPCClient(const std::string &identity,
+                     const std::string &address,
+                     const uint16_t port);
 
   template <typename... A>
   msgpack::object_handle call(const std::string &name, A... args);
