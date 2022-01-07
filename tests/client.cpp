@@ -39,7 +39,7 @@ public:
   MSGPACK_DEFINE(v)
 };
 
-void f1(zRPC::zRPCClient &client)
+void f1(zRPC::Client &client)
 {
   try
   {
@@ -51,7 +51,7 @@ void f1(zRPC::zRPCClient &client)
   }
 }
 
-void f2(zRPC::zRPCClient &client)
+void f2(zRPC::Client &client)
 {
   try
   {
@@ -65,7 +65,7 @@ void f2(zRPC::zRPCClient &client)
   }
 }
 
-void f3(zRPC::zRPCClient &client)
+void f3(zRPC::Client &client)
 {
   try
   {
@@ -80,7 +80,7 @@ void f3(zRPC::zRPCClient &client)
   }
 }
 
-void l1(zRPC::zRPCClient &client)
+void l1(zRPC::Client &client)
 {
   try
   {
@@ -96,7 +96,7 @@ void l1(zRPC::zRPCClient &client)
   }
 }
 
-void l2(zRPC::zRPCClient &client)
+void l2(zRPC::Client &client)
 {
   try
   {
@@ -112,7 +112,7 @@ void l2(zRPC::zRPCClient &client)
   }
 }
 
-void f4(zRPC::zRPCClient &client)
+void f4(zRPC::Client &client)
 {
   try
   {
@@ -127,15 +127,9 @@ void f4(zRPC::zRPCClient &client)
   }
 }
 
-int main()
+int main(void)
 {
-  int major = -1;
-  int minor = -1;
-  int patch = -1;
-  zmq_version(&major, &minor, &patch);
-  printf("Installed ZeroMQ version: %d.%d.%d\n", major, minor, patch);
-
-  zRPC::zRPCClient client("TEST-CLIENT", "tcp://localhost", 12345);
+  zRPC::Client client("TEST-CLIENT", "tcp://localhost", 12345);
 
   auto f3t = std::thread(f3, std::ref(client));
   auto f2t = std::thread(f2, std::ref(client));
@@ -155,5 +149,5 @@ int main()
 
   f4t.join();
 
-  return 0;
+  client.call("terminate"); // shutdown the server
 }

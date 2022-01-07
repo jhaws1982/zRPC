@@ -13,8 +13,8 @@
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
  *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -70,10 +70,15 @@ Message &f4(Message &m)
   return m;
 }
 
-int main()
+void terminate(void)
+{
+  return;
+}
+
+int main(void)
 {
   //  Prepare our context and socket
-  zRPC::zRPCServer srv(12345, 4);
+  zRPC::Server srv(12345, 4);
   std::cout << "Starting zRPC server!" << std::endl;
 
   Message m;
@@ -85,7 +90,7 @@ int main()
            [](int a, uint8_t b) -> double
            {
              std::cout << "Inside l1" << std::endl;
-             sleep(7);
+             sleep(1);
              return a + b;
            });
   srv.bind("l2",
@@ -96,8 +101,8 @@ int main()
              return a + b;
            });
   srv.bind("fNS", &TestNS::fNS);
+  srv.bind("terminate", &terminate); // for terminating
   srv.start();
 
-  std::cout << "Exiting!" << std::endl;
-  return 0;
+  std::cout << "Exiting server!" << std::endl;
 }

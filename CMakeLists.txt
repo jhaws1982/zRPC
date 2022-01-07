@@ -60,3 +60,7 @@ target_compile_options(client PUBLIC ${compile_options})
 add_executable(server tests/server.cpp)
 target_link_libraries(server zRPC)
 target_compile_options(server PUBLIC ${compile_options})
+
+add_executable(unittest tests/unit.cpp)
+target_link_libraries(unittest zRPC)
+target_compile_options(unittest PUBLIC ${compile_options})

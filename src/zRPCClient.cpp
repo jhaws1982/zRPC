@@ -29,10 +29,10 @@
 
 using namespace zRPC;
 
-zRPCClient::zRPCClient(const std::string &identity,
-                       const std::string &address,
-                       const uint16_t port) :
-    m_cxt(1),
+Client::Client(const std::string &identity,
+               const std::string &address,
+               const uint16_t port) :
+    m_ctx(1),
     m_idBase(identity),
     m_uri(address + ":" + std::to_string(port))
 {

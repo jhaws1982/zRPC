@@ -1,5 +1,5 @@
 /*
- * @file   zRPC.cpp
+ * @file   zRPCServer.cpp
  * @author Jonathan Haws
  * @date   30-Oct-2021 3:09:39 pm
  *
@@ -27,21 +27,22 @@
 
 #include "zRPC.hpp"
 
+#include <csignal>
 #include <iostream>
 
 using namespace zRPC;
 
-zRPCServer::zRPCServer(const uint16_t port, const uint32_t nWorkers) :
-    zRPCServer("tcp://*", port, nWorkers)
+Server::Server(const uint16_t port, const uint32_t nWorkers) :
+    Server("tcp://*", port, nWorkers)
 {
 }
 
-zRPCServer::zRPCServer(const std::string &address,
+Server::Server(const std::string &address,
                        const uint16_t port,
                        const uint32_t nWorkers) :
-    m_cxt(16),
-    m_brokerFrontend(m_cxt, ZMQ_ROUTER),
-    m_brokerBackend(m_cxt, ZMQ_DEALER)
+    m_ctx(16),
+    m_brokerFrontend(m_ctx, ZMQ_ROUTER),
+    m_brokerBackend(m_ctx, ZMQ_DEALER)
 {
   try
   {
@@ -54,6 +55,7 @@ zRPCServer::zRPCServer(const std::string &address,
     std::cerr << " !! ZMQ Error " << e.num() << ": " << e.what() << std::endl;
   }
 
+  m_running = true;
   for (uint32_t n = 0; n < nWorkers; ++n)
   {
     // Create and connect the worker sockets now
@@ -61,7 +63,22 @@ zRPCServer::zRPCServer(const std::string &address,
   }
 }
 
-void zRPCServer::start(void)
+Server::~Server()
+{
+  // Ensure we have shut things down completely
+  stop();
+
+  // Loop over all worker threads and join them
+  for (auto &t : m_th)
+  {
+    if (t.joinable())
+    {
+      t.join();
+    }
+  }
+}
+
+void Server::start(void)
 {
   // Start the proxy to connect multiple clients to multiple workers
   try
@@ -70,18 +87,32 @@ void zRPCServer::start(void)
   }
   catch (const zmq::error_t &e)
   {
-    std::cerr << " !! ZMQ Error " << e.num() << ": " << e.what() << std::endl;
+    std::cerr << " !! ZMQ Proxy Error " << e.num() << ": " << e.what()
+              << std::endl;
   }
 }
 
-void zRPCServer::worker(void)
+void Server::stop(void)
+{
+  // HACK: 0MQ does not have a way to flush output buffers, so to terminate
+  // properly we need to have a short delay to ensure that the buffers are
+  // cleared before shutting down the context.
+  std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+  // Clear the running flag and shutdown the context. Final cleanup will take
+  // place in the destructor.
+  m_running = false;
+  m_ctx.shutdown();
+}
+
+void Server::worker(void)
 {
   try
   {
-    zmq::socket_t sock(m_cxt, ZMQ_DEALER);
+    zmq::socket_t sock(m_ctx, ZMQ_DEALER);
     sock.connect("inproc://backend");
 
-    while (1)
+    while (m_running)
     {
       zmq::message_t identity;
       zmq::message_t msg;
@@ -93,25 +124,58 @@ void zRPCServer::worker(void)
       std::tuple<std::string, msgpack::object> rpc;
       data.get().convert(rpc);
 
-      // Call the RPC
+      // Call the RPC (if present, )
       auto &&name = std::get<0>(rpc);
       auto &&args = std::get<1>(rpc);
-      auto res = m_rpcs.at(name)(args);
+      std::unique_ptr<msgpack::v1::object_handle> res;
 
-      // Reply with the identity of the message for the broker
-      zmq::message_t copied_id;
-      copied_id.copy(identity);
-      (void)sock.send(copied_id, zmq::send_flags::sndmore);
+      if ("terminate" == name)
+      {
+        // Respond with an empty message
+        res = std::make_unique<msgpack::object_handle>();
+        reply(sock, identity, res);
 
-      // Pack the result into an object
-      auto sbuf = std::make_shared<msgpack::sbuffer>();
-      msgpack::pack(*sbuf, res->get());
-      (void)sock.send(zmq::const_buffer(sbuf->data(), sbuf->size()),
-                      zmq::send_flags::none);
+        // Now stop the server
+        stop();
+      }
+      else
+      {
+        if (m_rpcs.find(name) != m_rpcs.end())
+        {
+          res = m_rpcs.at(name)(args);
+        }
+        else
+        {
+          Error err;
+          err.m_msg = "'" + name + "' RPC not found!";
+          auto zone = std::make_unique<msgpack::zone>();
+          auto rtnobj = msgpack::object(err, *zone);
+          res =
+              std::make_unique<msgpack::object_handle>(rtnobj, std::move(zone));
+        }
+        reply(sock, identity, res);
+      }
     }
   }
   catch (const zmq::error_t &e)
   {
-    std::cerr << " !! ZMQ Error " << e.num() << ": " << e.what() << std::endl;
+    std::cerr << " !! ZMQ Worker Error " << e.num() << ": " << e.what()
+              << std::endl;
   }
+}
+
+void Server::reply(zmq::socket_t &sock,
+                       zmq::message_t &identity,
+                       std::unique_ptr<msgpack::object_handle> &res)
+{
+  // Reply with the identity of the message for the broker
+  zmq::message_t copied_id;
+  copied_id.copy(identity);
+  (void)sock.send(copied_id, zmq::send_flags::sndmore);
+
+  // Pack the result into an object
+  auto sbuf = std::make_shared<msgpack::sbuffer>();
+  msgpack::pack(*sbuf, res->get());
+  (void)sock.send(zmq::const_buffer(sbuf->data(), sbuf->size()),
+                  zmq::send_flags::none);
 }

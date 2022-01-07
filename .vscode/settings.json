@@ -108,6 +108,9 @@
     "variant": "cpp",
     "qsharedpointer": "cpp",
     "regex": "cpp",
-    "complex": "cpp"
+    "complex": "cpp",
+    "bitset": "cpp",
+    "cfenv": "cpp",
+    "typeindex": "cpp"
   },
 }

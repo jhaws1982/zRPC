@@ -37,3 +37,6 @@ in the RPC server, were borrowed from rpclib (https://github.com/rpclib/rpclib).
   - Easy way to publish generic events as passed in
   - Easy way to subscribe to generic events and receive callback when received (how to include generic data?)
 - PlantUML class diagrams
+
+## BUGS
+- Determine how to return errors; zRPCError is fine, but how to get either error or value out in single 'as' call?

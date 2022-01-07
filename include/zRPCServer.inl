@@ -28,9 +28,17 @@
 namespace zRPC
 {
 template <typename F>
-void zRPCServer::bind(const std::string &name, F func)
+void Server::bind(const std::string &name, F func)
 {
-  insertFunc<F>(name, func, typename support::callable_traits<F>::f_rtn());
+  if (m_rpcs.find(name) == m_rpcs.end())
+  {
+    insertFunc<F>(name, func, typename support::callable_traits<F>::f_rtn());
+  }
+  else
+  {
+    throw std::runtime_error("'" + name +
+                             "' has already been registered as an RPC.");
+  }
 }
 
 /**
@@ -41,7 +49,7 @@ void zRPCServer::bind(const std::string &name, F func)
  * @param func Function to call
  */
 template <typename F>
-void zRPCServer::insertFunc(const std::string &name,
+void Server::insertFunc(const std::string &name,
                             F func,
                             support::nonvoid_rtn const &)
 {
@@ -77,7 +85,7 @@ void zRPCServer::insertFunc(const std::string &name,
  * @param func Function to call
  */
 template <typename F>
-void zRPCServer::insertFunc(const std::string &name,
+void Server::insertFunc(const std::string &name,
                             F func,
                             support::void_rtn const &)
 {
