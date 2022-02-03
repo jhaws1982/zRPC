@@ -9,6 +9,8 @@ project(zRPC
         DESCRIPTION "0MQ-based RPC client/server library with MessagePack support"
        )
 
+option(ZRPC_BUILD_TESTS "Enable build of unit test applications" ON)
+
 # Setup default compiler flags
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -25,17 +27,30 @@ set(compile_options -pedantic-errors
     CACHE INTERNAL "Compiler Options"
    )
 
+###############################################################################
+# Bring in CPM
+###############################################################################
+include(cmake/CPM.cmake)
 
 ###############################################################################
 # Bring in CPPZMQ header-only API
 ###############################################################################
-include(cmake/cppzmq.cmake)
+CPMAddPackage(
+  NAME cppzmq
+  VERSION 4.8.1
+  GITHUB_REPOSITORY "zeromq/cppzmq"
+  OPTIONS "CPPZMQ_BUILD_TESTS OFF"
+)
 
 ###############################################################################
 # Bring in MSGPACK-C header-only API
 ###############################################################################
-include(cmake/msgpack-c.cmake)
-
+CPMAddPackage(
+  NAME msgpack
+  GIT_TAG cpp-4.0.3
+  GITHUB_REPOSITORY "msgpack/msgpack-c"
+  OPTIONS "MSGPACK_BUILD_DOCS OFF" "MSGPACK_CXX20 ON"
+)
 
 ###############################################################################
 # zRPC library
@@ -53,14 +68,16 @@ target_compile_options(${PROJECT_NAME} PUBLIC ${compile_options})
 ###############################################################################
 # Test applications
 ###############################################################################
-add_executable(client tests/client.cpp)
-target_link_libraries(client zRPC)
-target_compile_options(client PUBLIC ${compile_options})
+if (ZRPC_BUILD_TESTS)
+  add_executable(client tests/client.cpp)
+  target_link_libraries(client zRPC)
+  target_compile_options(client PUBLIC ${compile_options})
 
-add_executable(server tests/server.cpp)
-target_link_libraries(server zRPC)
-target_compile_options(server PUBLIC ${compile_options})
+  add_executable(server tests/server.cpp)
+  target_link_libraries(server zRPC)
+  target_compile_options(server PUBLIC ${compile_options})
 
-add_executable(unittest tests/unit.cpp)
-target_link_libraries(unittest zRPC)
-target_compile_options(unittest PUBLIC ${compile_options})
+  add_executable(unittest tests/unit.cpp)
+  target_link_libraries(unittest zRPC)
+  target_compile_options(unittest PUBLIC ${compile_options})
+endif(ZRPC_BUILD_TESTS)

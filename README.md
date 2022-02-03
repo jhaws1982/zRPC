@@ -21,8 +21,9 @@ in the RPC server, were borrowed from rpclib (https://github.com/rpclib/rpclib).
 | ---------- | ------- | ------------------------ | ---------------------------- |
 | libzmq     | 4.3.2+  | 0MQ base library         | apt install libzmq5          |
 | libzmq-dev | 4.3.2+  | 0MQ development files    | apt install libzmq3-dev      |
+| cppzmq     | 4.8+    | 0MQ C++ Header-only API  | N/A (pulled in cmake)        |
 | msgpack-c  | 4.x+    | MessagePack C++ headers  | N/A (pulled in cmake)        |
-| Boost      | 1.71.0+ | Boost Libraries (header) | apt install libboost-all-dev |
+| Boost      | 1.71.0+ | Boost Libraries (header) | apt install libboost-*-dev<br>- chrono<br>- context<br>- filesystem<br>- system<br>- timer<br> |
 
 ## Notes
 - Any argument or return value associated with a function must be packable by
@@ -32,7 +33,9 @@ in the RPC server, were borrowed from rpclib (https://github.com/rpclib/rpclib).
 ## TODO
 - Setup make install in CMake
 - Unit testing from the beginning - basic client/server, all ctors, move/copy
+  - Add gtest suite as testing dependency
   - Write unit test to ensure that all workers are used and client blocks until free worker then continues
+  - Tie into codecov.io
 - RPC client/server plus generic class/event publisher
   - Easy way to publish generic events as passed in
   - Easy way to subscribe to generic events and receive callback when received (how to include generic data?)
