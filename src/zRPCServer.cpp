@@ -38,8 +38,8 @@ Server::Server(const uint16_t port, const uint32_t nWorkers) :
 }
 
 Server::Server(const std::string &address,
-                       const uint16_t port,
-                       const uint32_t nWorkers) :
+               const uint16_t port,
+               const uint32_t nWorkers) :
     m_ctx(16),
     m_brokerFrontend(m_ctx, ZMQ_ROUTER),
     m_brokerBackend(m_ctx, ZMQ_DEALER)
@@ -165,8 +165,8 @@ void Server::worker(void)
 }
 
 void Server::reply(zmq::socket_t &sock,
-                       zmq::message_t &identity,
-                       std::unique_ptr<msgpack::object_handle> &res)
+                   zmq::message_t &identity,
+                   std::unique_ptr<msgpack::object_handle> &res) const
 {
   // Reply with the identity of the message for the broker
   zmq::message_t copied_id;

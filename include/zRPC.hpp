@@ -100,7 +100,7 @@ private:
    */
   void reply(zmq::socket_t &sock,
              zmq::message_t &identity,
-             std::unique_ptr<msgpack::object_handle> &res);
+             std::unique_ptr<msgpack::object_handle> &res) const;
 
 public:
   /**
@@ -121,8 +121,8 @@ public:
    * @param nWorkers[in] Number of worker threads to create, default = 16
    */
   explicit Server(const std::string &address,
-                      const uint16_t port,
-                      const uint32_t nWorkers = 16U);
+                  const uint16_t port,
+                  const uint32_t nWorkers = 16U);
 
   ~Server();
 
@@ -208,8 +208,8 @@ public:
    * @param port Port of the server to connect to.
    */
   explicit Client(const std::string &identity,
-                      const std::string &address,
-                      const uint16_t port);
+                  const std::string &address,
+                  const uint16_t port);
 
   template <typename... A>
   msgpack::object_handle call(const std::string &name, A... args);
