@@ -15,4 +15,4 @@ jobs:
       with:
         submodule_update: ON
         run_tests: ON
-        unit_test_build: -Dtest=ON
+        unit_test_build: -DZRPC_BUILD_TESTS=ON
