@@ -16,3 +16,15 @@ jobs:
         submodule_update: ON
         run_tests: ON
         unit_test_build: -DZRPC_BUILD_TESTS=ON
+    - name: Test project and generate coverage report
+      run: |
+              cd build/
+              make zRPC_coverage
+              curl https://keybase.io/codecovsecurity/pgp_keys.asc | gpg --no-default-keyring --keyring trustedkeys.gpg --import
+              curl -Os https://uploader.codecov.io/latest/linux/codecov
+              curl -Os https://uploader.codecov.io/latest/linux/codecov.SHA256SUM
+              curl -Os https://uploader.codecov.io/latest/linux/codecov.SHA256SUM.sig
+              gpgv codecov.SHA256SUM.sig codecov.SHA256SUM
+              shasum -a 256 -c codecov.SHA256SUM
+              chmod +x codecov
+              ./codecov
