@@ -87,6 +87,6 @@ if (ZRPC_BUILD_TESTS)
                                       EXECUTABLE unittest
                                       DEPENDENCIES unittest
                                       BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-                                      EXCLUDE ""
+                                      EXCLUDE "tests"
 				                             )
 endif(ZRPC_BUILD_TESTS)
