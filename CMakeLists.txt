@@ -77,7 +77,16 @@ if (ZRPC_BUILD_TESTS)
   target_link_libraries(server zRPC)
   target_compile_options(server PUBLIC ${compile_options})
 
+  include(cmake/CodeCoverage.cmake)
+  append_coverage_compiler_flags()
   add_executable(unittest tests/unit.cpp)
   target_link_libraries(unittest zRPC)
   target_compile_options(unittest PUBLIC ${compile_options})
+
+  setup_target_for_coverage_gcovr_xml(NAME ${PROJECT_NAME}_coverage
+                                      EXECUTABLE unittest
+                                      DEPENDENCIES unittest
+                                      BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                                      EXCLUDE ""
+				                             )
 endif(ZRPC_BUILD_TESTS)

@@ -1,6 +1,9 @@
 # Build folder
 _bld
 
+# Coverage tests
+test-reports
+
 # Prerequisites
 *.d
 
