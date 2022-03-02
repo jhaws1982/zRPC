@@ -28,6 +28,7 @@
 #ifndef _ZRPC_HPP_
 #define _ZRPC_HPP_
 
+#include <CRC.h>
 #include <functional>
 #include <memory>
 #include <thread>
@@ -84,6 +85,11 @@ private:
    * @brief Flag indicating that the server is currently running
    */
   bool m_running{false};
+
+  /**
+   * @brief CRC table for use in efficient CRC calculations
+   */
+  CRC::Table<std::uint32_t, 32> m_crcTable;
 
   /**
    * @brief Worker thread function
@@ -195,6 +201,11 @@ private:
    * @brief URI of the server (address + port) to connect to on each RPC call
    */
   std::string m_uri;
+
+  /**
+   * @brief CRC table for use in efficient CRC calculations
+   */
+  CRC::Table<std::uint32_t, 32> m_crcTable;
 
 public:
   /**

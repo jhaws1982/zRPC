@@ -53,11 +53,24 @@ CPMAddPackage(
 )
 
 ###############################################################################
+# Bring in C++ CRC header-only API
+###############################################################################
+CPMAddPackage(
+  NAME CRCpp
+  GIT_TAG release-1.1.0.0
+  GITHUB_REPOSITORY "d-bahr/CRCpp"
+)
+if(CRCpp_ADDED)
+  add_library(CRCpp INTERFACE)
+  target_include_directories(CRCpp SYSTEM INTERFACE ${CRCpp_SOURCE_DIR}/inc)
+endif(CRCpp_ADDED)
+
+###############################################################################
 # zRPC library
 ###############################################################################
 add_library(${PROJECT_NAME} SHARED)
 target_include_directories(${PROJECT_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(${PROJECT_NAME} PUBLIC cppzmq msgpackc-cxx pthread)
+target_link_libraries(${PROJECT_NAME} PUBLIC cppzmq msgpackc-cxx CRCpp pthread)
 target_sources(${PROJECT_NAME} PRIVATE  src/zRPCClient.cpp
                                         src/zRPCServer.cpp
                                PUBLIC   include/zRPC.hpp

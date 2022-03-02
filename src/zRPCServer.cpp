@@ -42,7 +42,8 @@ Server::Server(const std::string &address,
                const uint32_t nWorkers) :
     m_ctx(16),
     m_brokerFrontend(m_ctx, ZMQ_ROUTER),
-    m_brokerBackend(m_ctx, ZMQ_DEALER)
+    m_brokerBackend(m_ctx, ZMQ_DEALER),
+    m_crcTable(CRC::CRC_32())
 {
   try
   {
@@ -119,40 +120,68 @@ void Server::worker(void)
       (void)sock.recv(identity);
       (void)sock.recv(msg);
 
-      // Unpack and convert the RPC name and arguments
-      auto data = msgpack::unpack(static_cast<char *>(msg.data()), msg.size());
-      std::tuple<std::string, msgpack::object> rpc;
-      data.get().convert(rpc);
+      // Unpack and convert the message and CRC
+      auto crcdata =
+          msgpack::unpack(static_cast<char *>(msg.data()), msg.size());
+      std::tuple<std::string, std::uint32_t> crcrpc;
+      crcdata.get().convert(crcrpc);
 
-      // Call the RPC (if present, )
-      auto &&name = std::get<0>(rpc);
-      auto &&args = std::get<1>(rpc);
+      auto &&rpcmsg = std::get<0>(crcrpc);
+      auto &&crc = std::get<1>(crcrpc);
+      std::uint32_t check =
+          CRC::Calculate(rpcmsg.data(), rpcmsg.size(), m_crcTable);
+
       std::unique_ptr<msgpack::v1::object_handle> res;
-
-      if ("terminate" == name)
+      if (check == crc)
       {
-        // Respond with an empty message
-        res = std::make_unique<msgpack::object_handle>();
-        reply(sock, identity, res);
+        // Unpack and convert RPC name and arguments
+        std::tuple<std::string, msgpack::object> rpc;
+        auto data =
+            msgpack::unpack(static_cast<char *>(rpcmsg.data()), rpcmsg.size());
+        data.get().convert(rpc);
 
-        // Now stop the server
-        stop();
-      }
-      else
-      {
-        if (m_rpcs.find(name) != m_rpcs.end())
+        // Call the RPC
+        auto &&name = std::get<0>(rpc);
+        auto &&args = std::get<1>(rpc);
+
+        if ("terminate" == name)
         {
-          res = m_rpcs.at(name)(args);
+          // Respond with an empty message
+          res = std::make_unique<msgpack::object_handle>();
+          reply(sock, identity, res);
+
+          // Now stop the server
+          stop();
         }
         else
         {
-          Error err;
-          err.m_msg = "'" + name + "' RPC not found!";
-          auto zone = std::make_unique<msgpack::zone>();
-          auto rtnobj = msgpack::object(err, *zone);
-          res =
-              std::make_unique<msgpack::object_handle>(rtnobj, std::move(zone));
+          if (m_rpcs.find(name) != m_rpcs.end())
+          {
+            res = m_rpcs.at(name)(args);
+          }
+          else
+          {
+            Error err;
+            err.m_msg = "'" + name + "' RPC not found!";
+            auto zone = std::make_unique<msgpack::zone>();
+            auto rtnobj = msgpack::object(err, *zone);
+            res = std::make_unique<msgpack::object_handle>(rtnobj,
+                                                           std::move(zone));
+          }
+          reply(sock, identity, res);
         }
+      }
+      else
+      {
+        Error err;
+        std::stringstream ss;
+        ss << std::hex << "Bad checksum: CRC=" << crc << " != " << check
+           << "=Checked";
+        std::cout << ss.str() << std::endl;
+        err.m_msg = ss.str();
+        auto zone = std::make_unique<msgpack::zone>();
+        auto rtnobj = msgpack::object(err, *zone);
+        res = std::make_unique<msgpack::object_handle>(rtnobj, std::move(zone));
         reply(sock, identity, res);
       }
     }

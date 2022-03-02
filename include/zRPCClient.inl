@@ -45,9 +45,16 @@ msgpack::object_handle Client::call(const std::string &name, A... args)
       auto args_tuple = std::make_tuple(args...);
       auto call_tuple = std::make_tuple(name, args_tuple);
 
-      // Pack the tuple into an object and send to the server
+      // Pack the tuple into a stringstream and calculate CRC
+      std::stringstream cbuf;
+      msgpack::pack(cbuf, call_tuple);
+      std::uint32_t crc =
+          CRC::Calculate(cbuf.str().data(), cbuf.str().size(), m_crcTable);
+      auto crc_tuple = std::make_tuple(cbuf.str(), crc);
+
+      // Pack the new tuple into an object and send to the server
       auto sbuf = std::make_shared<msgpack::sbuffer>();
-      msgpack::pack(*sbuf, call_tuple);
+      msgpack::pack(*sbuf, crc_tuple);
       (void)l_sock.send(zmq::const_buffer(sbuf->data(), sbuf->size()));
 
       // Wait for response
