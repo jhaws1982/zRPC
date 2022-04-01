@@ -37,6 +37,7 @@ void l1(zRPC::Client &client)
     {
       auto res = client.call("l1", 2, 2 * i - 1);
       std::cout << "l1 result = " << res.get().as<int>() << std::endl;
+      assert(res.get().as<int>() == (2 + (2 * i - 1)));
     }
   }
   catch (const std::exception &e)
@@ -53,6 +54,7 @@ void l2(zRPC::Client &client)
     {
       auto res = client.call("l2", 2, i);
       std::cout << "l2 result = " << res.get().as<double>() << std::endl;
+      assert(res.get().as<double>() == (2 * i));
     }
   }
   catch (const std::exception &e)
@@ -78,8 +80,9 @@ void client(void)
   }
   catch (const msgpack::v1::type_error &e)
   {
-    std::cout << "l3 error = " << res.get().as<zRPC::Error>().m_msg
+    std::cout << "l3 error = '" << res.get().as<zRPC::Error>().m_msg << "'"
               << std::endl;
+    assert(res.get().as<zRPC::Error>().m_msg == "'l3' RPC not found!");
   }
 
   client.call("terminate");  // shutdown the server
@@ -109,6 +112,57 @@ void server(void)
   std::cout << " EXITING SERVER THREAD!" << std::endl;
 }
 
+void pub(void)
+{
+  using namespace std::chrono_literals;
+
+  //  Prepare our context and socket
+  zRPC::Publisher publisher(54321);
+  std::cout << "Starting zRPC publisher!" << std::endl;
+
+  std::string msg;
+  for (int i = 0; i < 12; ++i)
+  {
+    msg = "This is message A.";
+    publisher.publish("A", msg);
+
+    msg = "This is message B.";
+    publisher.publish("B", msg);
+
+    std::this_thread::sleep_for(1s);
+  }
+}
+
+void sub(void)
+{
+  using namespace std::chrono_literals;
+
+  //  Prepare our context and socket
+  zRPC::Subscriber subscriber;
+  std::cout << "Starting zRPC subscriber!" << std::endl;
+
+  subscriber.subscribe<std::string>(
+      "tcp://localhost:54321", "A",
+      [](const std::string &topic, const std::string &data) -> void
+      {
+        std::cout << topic << ": " << data << std::endl;
+        assert(data == "This is message A.");
+      });
+
+  subscriber.subscribe<std::string>(
+      "tcp://localhost:54321", "B",
+      [](const std::string &topic, const std::string &data) -> void
+      {
+        std::cout << topic << ": " << data << std::endl;
+        assert(data == "This is message B.");
+      });
+
+  for (int i = 0; i < 10; ++i)
+  {
+    std::this_thread::sleep_for(1s);
+  }
+}
+
 int main(void)
 {
   int major = -1;
@@ -117,11 +171,19 @@ int main(void)
   zmq_version(&major, &minor, &patch);
   printf(" ** Installed ZeroMQ version: %d.%d.%d\n", major, minor, patch);
 
+  // Client/Server test
   auto cl = std::thread(client);
   auto srv = std::thread(server);
 
   cl.join();
   srv.join();
+
+  // Pub/Sub test
+  auto pth = std::thread(pub);
+  auto sth = std::thread(sub);
+
+  pth.join();
+  sth.join();
 
   return 0;
 }
