@@ -73,6 +73,8 @@ target_include_directories(${PROJECT_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/in
 target_link_libraries(${PROJECT_NAME} PUBLIC cppzmq msgpackc-cxx CRCpp pthread)
 target_sources(${PROJECT_NAME} PRIVATE  src/zRPCClient.cpp
                                         src/zRPCServer.cpp
+                                        src/zRPCPublisher.cpp
+                                        src/zRPCSubscriber.cpp
                                PUBLIC   include/zRPC.hpp
               )
 target_compile_options(${PROJECT_NAME} PUBLIC ${compile_options})
@@ -89,6 +91,14 @@ if (ZRPC_BUILD_TESTS)
   add_executable(server tests/server.cpp)
   target_link_libraries(server zRPC)
   target_compile_options(server PUBLIC ${compile_options})
+
+  add_executable(publisher tests/publisher.cpp)
+  target_link_libraries(publisher zRPC)
+  target_compile_options(publisher PUBLIC ${compile_options})
+
+  add_executable(subscriber tests/subscriber.cpp)
+  target_link_libraries(subscriber zRPC)
+  target_compile_options(subscriber PUBLIC ${compile_options})
 
   include(cmake/CodeCoverage.cmake)
   append_coverage_compiler_flags()

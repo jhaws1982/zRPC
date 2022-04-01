@@ -34,6 +34,7 @@
 #include <thread>
 #include <tuple>
 #include <unordered_map>
+#include <vector>
 #include <zmq.hpp>
 #include "zRPCSupport.hpp"
 
@@ -263,12 +264,149 @@ struct Error
   MSGPACK_DEFINE(m_msg)
 };
 
-// class zPublisher
-// class zSubscriber
+/**
+ * @class Publisher zRPC.hpp "zRPC.hpp"
+ *
+ * @brief Implements a 0MQ-based message publisher.
+ *
+ * This creates a simple 0MQ publisher with a method to publish any
+ * MessagePack-able object to a named topic.
+ */
+class Publisher
+{
+private:
+  // Delete copy constructor
+  Publisher(Publisher const &) = delete;
+
+  /**
+   * @brief Zero-MQ context for the publisher
+   */
+  zmq::context_t m_ctx;
+
+  /**
+   * @brief Publisher socket
+   */
+  zmq::socket_t m_pub;
+
+  /**
+   * @brief CRC table for use in efficient CRC calculations
+   */
+  CRC::Table<std::uint32_t, 32> m_crcTable;
+
+public:
+  /**
+   * @brief Construct a new zRPC::Publisher object listening on all interfaces
+   * on the specified port for new TCP subscriptions
+   *
+   * @param[in] port Port to listen on
+   */
+  explicit Publisher(const uint16_t port);
+
+  /**
+   * @brief Construct a new zRPC::Publisher object listening on the specified
+   * URI for new subscriptions
+   *
+   * @param[in] uri Zero-MQ address/port URI to bind listening socket to.
+   */
+  explicit Publisher(const std::string &uri);
+
+  /**
+   * @brief Publish a MessagePack-able object using the given topic name
+   *
+   * @tparam T MessagePack-able object type
+   * @param[in] topic Name of the topic to publish to
+   * @param[in] data Data object to publish
+   */
+  template <class T>
+  void publish(const std::string &topic, T &data);
+};
+
+class Subscriber
+{
+public:
+  /**
+   * @brief Callback alias declartion, specifying the required prototype
+   *
+   * @tparam T MessagePack-able object type of message to receive
+   */
+  template <class T>
+  using cb_type = std::function<void(const std::string &topic, T &data)>;
+
+private:
+  // Delete copy constructor
+  Subscriber(Subscriber const &) = delete;
+
+  /**
+   * @brief Zero-MQ context for the subscriber
+   */
+  zmq::context_t m_ctx;
+
+  /**
+   * @brief Vector of subscription threads
+   */
+  std::vector<std::thread> m_handlers;
+
+  /**
+   * @brief Flag indicating whether the zRPC::Subscriber object is running
+   */
+  bool m_running{false};
+
+  /**
+   * @brief CRC table for use in efficient CRC calculations
+   */
+  CRC::Table<std::uint32_t, 32> m_crcTable;
+
+  /**
+   * @brief Subscription handler function
+   *
+   * @tparam T MessagePack-able object type
+   * @param[in] uri URI of the publisher to subcribe to
+   * @param[in] topic Name of the topic to subscribe to
+   * @param[in] cb Callback to call when message is received
+   */
+  template <class T>
+  void handler(const std::string &uri, const std::string &topic, cb_type<T> cb);
+
+public:
+  /**
+   * @brief Construct a new zRPC::Subscriber object to subscribe to messages
+   * from a zRPC::Publisher
+   */
+  Subscriber();
+
+  ~Subscriber();
+
+  /**
+   * @brief Subscribe to a topic on the publisher at the provided URI and call
+   * the callback function for each message received.
+   *
+   * @note In order to use this function properly, the received object type must
+   * be specified in the call, like this:
+   * @code
+   * s.subscribe<string>("tcp://localhost:54321", "MyStringTopic",
+   *             ^^^^^^  [](const string &topic, const string &msg)
+   *                     {
+   *                       cout << topic << endl;
+   *                       cout << msg << endl;
+   *                     });
+   * @endcode
+   *
+   * @tparam T MessagePack-able object type
+   * @param[in] uri URI of the publisher to subcribe to
+   * @param[in] topic Name of the topic to subscribe to
+   * @param[in] cb Callback to call when message is received
+   */
+  template <class T>
+  void subscribe(const std::string &uri,
+                 const std::string &topic,
+                 cb_type<T> cb);
+};
 
 }  // namespace zRPC
 
 #include "zRPCClient.inl"
+#include "zRPCPublisher.inl"
 #include "zRPCServer.inl"
+#include "zRPCSubscriber.inl"
 
 #endif  // _ZRPC_HPP_
