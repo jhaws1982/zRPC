@@ -30,11 +30,10 @@
 using namespace zRPC;
 
 Client::Client(const std::string &identity,
-               const std::string &address,
-               const uint16_t port) :
+               const std::string &uri) :
     m_ctx(1),
     m_idBase(identity),
-    m_uri(address + ":" + std::to_string(port)),
+    m_uri(uri),
     m_crcTable(CRC::CRC_32())
 {
 }

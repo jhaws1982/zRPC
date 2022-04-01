@@ -33,22 +33,21 @@
 using namespace zRPC;
 
 Server::Server(const uint16_t port, const uint32_t nWorkers) :
-    Server("tcp://*", port, nWorkers)
+    Server("tcp://*:" + std::to_string(port), nWorkers)
 {
 }
 
-Server::Server(const std::string &address,
-               const uint16_t port,
+Server::Server(const std::string &uri,
                const uint32_t nWorkers) :
     m_ctx(16),
-    m_brokerFrontend(m_ctx, ZMQ_ROUTER),
-    m_brokerBackend(m_ctx, ZMQ_DEALER),
+    m_brokerFrontend(m_ctx, zmq::socket_type::router),
+    m_brokerBackend(m_ctx, zmq::socket_type::dealer),
     m_crcTable(CRC::CRC_32())
 {
   try
   {
     // Start the broker sockets and bind to their ports
-    m_brokerFrontend.bind(address + ":" + std::to_string(port));
+    m_brokerFrontend.bind(uri);
     m_brokerBackend.bind("inproc://backend");
   }
   catch (const zmq::error_t &e)
@@ -110,7 +109,7 @@ void Server::worker(void)
 {
   try
   {
-    zmq::socket_t sock(m_ctx, ZMQ_DEALER);
+    zmq::socket_t sock(m_ctx, zmq::socket_type::dealer);
     sock.connect("inproc://backend");
 
     while (m_running)

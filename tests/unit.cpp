@@ -64,7 +64,7 @@ void l2(zRPC::Client &client)
 void client(void)
 {
   std::cout << "Starting zRPC client!" << std::endl;
-  zRPC::Client client("TEST-CLIENT", "tcp://localhost", 12345);
+  zRPC::Client client("TEST-CLIENT", "tcp://localhost:12345");
 
   auto l1t = std::thread(l1, std::ref(client));
   auto l2t = std::thread(l2, std::ref(client));

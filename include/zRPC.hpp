@@ -44,8 +44,9 @@
 
 namespace zRPC
 {
+
 /**
- * @class Server zRPC.hpp
+ * @class Server zRPC.hpp "zRPC.hpp"
  *
  * @brief Implements a 0MQ-based server.
  *
@@ -59,6 +60,10 @@ class Server
 private:
   using functor_type = std::function<std::unique_ptr<msgpack::object_handle>(
       msgpack::object const &)>;
+
+  /**
+   * @brief Map of bound RPC function calls
+   */
   std::unordered_map<std::string, functor_type> m_rpcs;
 
   /**
@@ -100,9 +105,9 @@ private:
    * @brief Reply to client with identity on provided socket with provided
    * result
    *
-   * @param sock Socket to reply on
-   * @param identity Client identity to reply to
-   * @param res MsgPack object to reply with
+   * @param[in] sock Socket to reply on
+   * @param[in] identity Client identity to reply to
+   * @param[in] res MsgPack object to reply with
    */
   void reply(zmq::socket_t &sock,
              zmq::message_t &identity,
@@ -110,25 +115,22 @@ private:
 
 public:
   /**
-   * @brief Construct a new Server object listening on all interfaces on the
-   * specified port with the specified number of worker threads
+   * @brief Construct a new zRPC::Server object listening on all interfaces on
+   * the specified port with the specified number of worker threads
    *
    * @param[in] port Port to listen on
-   * @param nWorkers[in] Number of worker threads to create, default = 16
+   * @param[in] nWorkers Number of worker threads to create, default = 16
    */
   explicit Server(const uint16_t port, const uint32_t nWorkers = 16U);
 
   /**
-   * @brief Construct a new Server object listening on the specified address
-   * and port with the specified number of worker threads
+   * @brief Construct a new zRPC::Server object listening on the specified
+   * address and port with the specified number of worker threads
    *
-   * @param[in] address Zero-MQ address to bind listening socket to.
-   * @param[in] port Port to listen on
-   * @param nWorkers[in] Number of worker threads to create, default = 16
+   * @param[in] uri Zero-MQ address:port to bind listening socket to.
+   * @param[in] nWorkers Number of worker threads to create, default = 16
    */
-  explicit Server(const std::string &address,
-                  const uint16_t port,
-                  const uint32_t nWorkers = 16U);
+  explicit Server(const std::string &uri, const uint32_t nWorkers = 16U);
 
   ~Server();
 
@@ -146,8 +148,8 @@ public:
    * @brief Bind a function to an RPC name
    *
    * @tparam F Callable type to bind (auto-detected by compiler)
-   * @param name Name of the RPC
-   * @param func Callable object to bind to the RPC name
+   * @param[in] name Name of the RPC
+   * @param[in] func Callable object to bind to the RPC name
    */
   template <typename F>
   void bind(const std::string &name, F func);
@@ -157,8 +159,9 @@ private:
    * @brief Insert non-void returning function into RPC map
    *
    * @tparam F Callable type to bind (auto-detected by compiler)
-   * @param name Name of the RPC
-   * @param func Function to call
+   * @param[in] name Name of the RPC
+   * @param[in] func Function to call
+   * @param support::void_rtn type to differentiate insert from non-void
    */
   template <typename F>
   void insertFunc(const std::string &name,
@@ -169,13 +172,24 @@ private:
    * @brief Insert void returning function into RPC map
    *
    * @tparam F Callable type to bind (auto-detected by compiler)
-   * @param name Name of the RPC
-   * @param func Function to call
+   * @param[in] name Name of the RPC
+   * @param[in] func Function to call
+   * @param support::void_rtn type to differentiate insert from non-void
    */
   template <typename F>
   void insertFunc(const std::string &name, F func, support::void_rtn const &);
 };
 
+/**
+ * @class Client zRPC.hpp "zRPC.hpp"
+ *
+ * @brief Implements a 0MQ-based client.
+ *
+ * This provides a mechanism to call the RPC just like a regular function with
+ * arguments, with the first argument always being the name of the RPC. If the
+ * arguments do not match the function on the remote server, an error is
+ * returned from the server.
+ */
 class Client
 {
 private:
@@ -183,7 +197,7 @@ private:
   Client(Client const &) = delete;
 
   /**
-   * @brief Zero-MQ context for the server
+   * @brief Zero-MQ context for the client
    */
   zmq::context_t m_ctx;
 
@@ -198,7 +212,8 @@ private:
   uint64_t m_idx{0};
 
   /**
-   * @brief URI of the server (address + port) to connect to on each RPC call
+   * @brief URI of the server (protocol and address:port) to connect to on each
+   * RPC call
    */
   std::string m_uri;
 
@@ -209,25 +224,40 @@ private:
 
 public:
   /**
-   * @brief Construct a new zRPCClient object
+   * @brief Construct a new zRPC::Client object
    *
    * This will establish the connection with the server and configure the 0MQ
    * identity for the client.
    *
-   * @param identity Identity string to use for the client.
-   * @param address Address of the server to connect to.
-   * @param port Port of the server to connect to.
+   * @param[in] identity Identity string to use for the client.
+   * @param[in] uri Zero-MQ address:port to bind listening socket to.
    */
   explicit Client(const std::string &identity,
-                  const std::string &address,
-                  const uint16_t port);
+                  const std::string &uri);
 
+  /**
+   * @brief Call the RPC with the given name and given arguments
+   *
+   * @tparam A Variadic argument list
+   * @param[in] name Name of the RPC to call on the remote serveer
+   * @param[in] args Variadic argument list to pass to the remote server
+   * @return msgpack::object_handle MessagePack'd object handle containing
+   * server response (if any)
+   */
   template <typename... A>
   msgpack::object_handle call(const std::string &name, A... args);
 };
 
+/**
+ * @class Error zRPC.hpp "zRPC.hpp"
+ *
+ * @brief Defines the zRPC error class used to report errors.
+ */
 struct Error
 {
+  /**
+   * @brief Error message
+   */
   std::string m_msg;
 
   MSGPACK_DEFINE(m_msg)

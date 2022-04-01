@@ -129,7 +129,7 @@ void f4(zRPC::Client &client)
 
 int main(void)
 {
-  zRPC::Client client("TEST-CLIENT", "tcp://localhost", 12345);
+  zRPC::Client client("TEST-CLIENT", "tcp://localhost:12345");
 
   auto f3t = std::thread(f3, std::ref(client));
   auto f2t = std::thread(f2, std::ref(client));

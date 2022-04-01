@@ -35,7 +35,7 @@ msgpack::object_handle Client::call(const std::string &name, A... args)
   try
   {
     // Ensure socket is connected to the server
-    zmq::socket_t l_sock(m_ctx, ZMQ_DEALER);
+    zmq::socket_t l_sock(m_ctx, zmq::socket_type::dealer);
     l_sock.set(zmq::sockopt::routing_id, m_idBase + std::to_string(m_idx++));
     l_sock.connect(m_uri);
 
