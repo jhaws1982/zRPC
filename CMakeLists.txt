@@ -47,9 +47,9 @@ CPMAddPackage(
 ###############################################################################
 CPMAddPackage(
   NAME msgpack
-  GIT_TAG cpp-4.0.3
+  GIT_TAG cpp-4.1.1
   GITHUB_REPOSITORY "msgpack/msgpack-c"
-  OPTIONS "MSGPACK_BUILD_DOCS OFF" "MSGPACK_CXX20 ON"
+  OPTIONS "MSGPACK_BUILD_DOCS OFF" "MSGPACK_CXX20 ON" "MSGPACK_USE_BOOST OFF"
 )
 
 ###############################################################################
