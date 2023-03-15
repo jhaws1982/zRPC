@@ -59,9 +59,10 @@ void f2(const Message &m)
 }
 Message f3(void)
 {
+  Message m;
   std::cout << " ** Executing " << __FUNCTION__ << std::endl;
   sleep(5);
-  return Message();
+  return m;
 }
 Message &f4(Message &m)
 {

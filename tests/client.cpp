@@ -72,7 +72,7 @@ void f3(zRPC::Client &client)
     auto res_f3 = client.call("f3");
     Message mr;
     std::cout << "f3 pre-result = " << mr.v << std::endl;
-    std::cout << "f3 result = " << res_f3.get().as<Message>().v << std::endl;
+    std::cout << "f3 result = " << res_f3.as<Message>().v << std::endl;
   }
   catch (const std::exception &e)
   {
@@ -87,7 +87,7 @@ void l1(zRPC::Client &client)
     for (int i = 0; i < 10; i++)
     {
       auto res = client.call("l1", 7, 3 + i);
-      std::cout << "l1 result = " << res.get().as<double>() << std::endl;
+      std::cout << "l1 result = " << res.as<double>() << std::endl;
     }
   }
   catch (const std::exception &e)
@@ -103,7 +103,7 @@ void l2(zRPC::Client &client)
     for (int i = 0; i < 10; i++)
     {
       auto res = client.call("l2", 11, 9 + i);
-      std::cout << "l2 result = " << res.get().as<int>() << std::endl;
+      std::cout << "l2 result = " << res.as<int>() << std::endl;
     }
   }
   catch (const std::exception &e)
@@ -118,8 +118,9 @@ void f4(zRPC::Client &client)
   {
     Message m;
     m.v = 1;
+    std::cout << "f4 pre-result = " << m.v << std::endl;
     auto res = client.call("f4", m);
-    std::cout << "f4 result = " << res.get().as<Message>().v << std::endl;
+    std::cout << "f4 result = " << res.as<Message>().v << std::endl;
   }
   catch (const std::exception &e)
   {

@@ -45,6 +45,7 @@
 
 namespace zRPC
 {
+typedef std::tuple<msgpack::object, std::uint32_t> ReturnType;
 
 /**
  * @class Server zRPC.hpp "zRPC.hpp"
@@ -59,8 +60,8 @@ namespace zRPC
 class Server
 {
 private:
-  using functor_type = std::function<std::unique_ptr<msgpack::object_handle>(
-      msgpack::object const &)>;
+  using functor_type =
+      std::function<std::unique_ptr<ReturnType>(msgpack::object const &)>;
 
   /**
    * @brief Map of bound RPC function calls
@@ -110,9 +111,10 @@ private:
    * @param[in] identity Client identity to reply to
    * @param[in] res MsgPack object to reply with
    */
-  void reply(zmq::socket_t &sock,
-             zmq::message_t &identity,
-             std::unique_ptr<msgpack::object_handle> &res) const;
+  void reply(
+      zmq::socket_t &sock,
+      zmq::message_t &identity,
+      std::unique_ptr<ReturnType> &res) const;
 
 public:
   /**
@@ -246,7 +248,7 @@ public:
    * server response (if any)
    */
   template <typename... A>
-  msgpack::object_handle call(const std::string &name, A... args);
+  msgpack::object call(const std::string &name, A... args);
 };
 
 /**

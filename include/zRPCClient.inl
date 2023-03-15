@@ -30,7 +30,7 @@
 namespace zRPC
 {
 template <typename... A>
-msgpack::object_handle Client::call(const std::string &name, A... args)
+msgpack::object Client::call(const std::string &name, A... args)
 {
   try
   {
@@ -49,7 +49,7 @@ msgpack::object_handle Client::call(const std::string &name, A... args)
       std::stringstream cbuf;
       msgpack::pack(cbuf, call_tuple);
       std::uint32_t crc =
-          CRC::Calculate(cbuf.str().data(), cbuf.str().size(), m_crcTable);
+          CRC::Calculate(cbuf.str().data(), cbuf.str().size(), CRC::CRC_32());
       auto crc_tuple = std::make_tuple(cbuf.str(), crc);
 
       // Pack the new tuple into an object and send to the server
@@ -62,7 +62,16 @@ msgpack::object_handle Client::call(const std::string &name, A... args)
       auto rxres = l_sock.recv(msg);
       if (rxres && (rxres.value() > 0))
       {
-        auto obj = msgpack::unpack(static_cast<char *>(msg.data()), msg.size());
+        auto d = msgpack::unpack(static_cast<char *>(msg.data()), msg.size());
+        ReturnType rtn;
+        d.get().convert(rtn);
+        crc = std::get<1>(rtn);
+        auto obj = std::get<0>(rtn);
+        std::uint32_t check =
+            CRC::Calculate(obj.via.bin.ptr, obj.via.bin.size, CRC::CRC_32());
+
+        std::cout << "CRC: " << std::hex << crc << std::endl;
+        std::cout << "CHK: " << std::hex << check << std::endl;
         return obj;
       }
     }
@@ -71,6 +80,6 @@ msgpack::object_handle Client::call(const std::string &name, A... args)
   {
     std::cerr << " !! ZMQ Error " << e.num() << ": " << e.what() << std::endl;
   }
-  return msgpack::object_handle();
+  return msgpack::object();
 }
 }  // namespace zRPC

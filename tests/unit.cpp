@@ -36,8 +36,8 @@ void l1(zRPC::Client &client)
     for (int i = 0; i < 5; i++)
     {
       auto res = client.call("l1", 2, 2 * i - 1);
-      std::cout << "l1 result = " << res.get().as<int>() << std::endl;
-      assert(res.get().as<int>() == (2 + (2 * i - 1)));
+      std::cout << "l1 result = " << res.as<int>() << std::endl;
+      assert(res.as<int>() == (2 + (2 * i - 1)));
     }
   }
   catch (const std::exception &e)
@@ -53,8 +53,8 @@ void l2(zRPC::Client &client)
     for (int i = 0; i < 5; i++)
     {
       auto res = client.call("l2", 2, i);
-      std::cout << "l2 result = " << res.get().as<double>() << std::endl;
-      assert(res.get().as<double>() == (2 * i));
+      std::cout << "l2 result = " << res.as<double>() << std::endl;
+      assert(res.as<double>() == (2 * i));
     }
   }
   catch (const std::exception &e)
@@ -76,13 +76,13 @@ void client(void)
   auto res = client.call("l3");
   try
   {
-    std::cout << "l3 result = " << res.get().as<double>() << std::endl;
+    std::cout << "l3 result = " << res.as<double>() << std::endl;
   }
   catch (const msgpack::v1::type_error &e)
   {
-    std::cout << "l3 error = '" << res.get().as<zRPC::Error>().m_msg << "'"
+    std::cout << "l3 error = '" << res.as<zRPC::Error>().m_msg << "'"
               << std::endl;
-    assert(res.get().as<zRPC::Error>().m_msg == "'l3' RPC not found!");
+    assert(res.as<zRPC::Error>().m_msg == "'l3' RPC not found!");
   }
 
   client.call("terminate");  // shutdown the server

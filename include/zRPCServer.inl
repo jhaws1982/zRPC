@@ -50,10 +50,10 @@ void Server::bind(const std::string &name, F func)
  */
 template <typename F>
 void Server::insertFunc(const std::string &name,
-                            F func,
-                            support::nonvoid_rtn const &)
+                        F func,
+                        support::nonvoid_rtn const &)
 {
-  m_rpcs[name] = [func, name](msgpack::object const &args)
+  m_rpcs[name] = [this, func, name](msgpack::object const &args)
   {
     auto called_args = args.via.array.size;
     auto expected_args = std::tuple_size<support::typeArgs<F>>::value;
@@ -73,7 +73,10 @@ void Server::insertFunc(const std::string &name,
     auto rtnval = support::call(func, realArgs);
     auto rtnobj = msgpack::object(rtnval, *zone);
 
-    return std::make_unique<msgpack::object_handle>(rtnobj, std::move(zone));
+    msgpack::object_handle hdl(rtnobj, std::move(zone));
+    std::uint32_t crc = CRC::Calculate(hdl.get().via.bin.ptr,
+                                       hdl.get().via.bin.size, m_crcTable);
+    return std::make_unique<ReturnType>(std::make_tuple(hdl.get(), crc));
   };
 }
 
@@ -86,10 +89,10 @@ void Server::insertFunc(const std::string &name,
  */
 template <typename F>
 void Server::insertFunc(const std::string &name,
-                            F func,
-                            support::void_rtn const &)
+                        F func,
+                        support::void_rtn const &)
 {
-  m_rpcs[name] = [func, name](msgpack::object const &args)
+  m_rpcs[name] = [this, func, name](msgpack::object const &args)
   {
     auto called_args = args.via.array.size;
     auto expected_args = std::tuple_size<support::typeArgs<F>>::value;
@@ -107,7 +110,10 @@ void Server::insertFunc(const std::string &name,
     args.convert(realArgs);
     support::call(func, realArgs);
 
-    return std::make_unique<msgpack::object_handle>();
+    msgpack::object_handle hdl;
+    std::uint32_t crc = CRC::Calculate(hdl.get().via.bin.ptr,
+                                       hdl.get().via.bin.size, m_crcTable);
+    return std::make_unique<ReturnType>(std::make_tuple(hdl.get(), crc));
   };
 }
 

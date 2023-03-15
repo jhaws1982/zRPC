@@ -130,7 +130,7 @@ void Server::worker(void)
       std::uint32_t check =
           CRC::Calculate(rpcmsg.data(), rpcmsg.size(), m_crcTable);
 
-      std::unique_ptr<msgpack::v1::object_handle> res;
+      std::unique_ptr<ReturnType> res;
       if (check == crc)
       {
         // Unpack and convert RPC name and arguments
@@ -146,7 +146,7 @@ void Server::worker(void)
         if ("terminate" == name)
         {
           // Respond with an empty message
-          res = std::make_unique<msgpack::object_handle>();
+          res = std::make_unique<ReturnType>();
           reply(sock, identity, res);
 
           // Now stop the server
@@ -164,8 +164,11 @@ void Server::worker(void)
             err.m_msg = "'" + name + "' RPC not found!";
             auto zone = std::make_unique<msgpack::zone>();
             auto rtnobj = msgpack::object(err, *zone);
-            res = std::make_unique<msgpack::object_handle>(rtnobj,
-                                                           std::move(zone));
+            auto hdl = msgpack::object_handle(rtnobj, std::move(zone));
+            std::uint32_t crc = CRC::Calculate(
+                hdl.get().via.bin.ptr, hdl.get().via.bin.size, m_crcTable);
+            res = std::make_unique<ReturnType>(
+                std::make_tuple(std::move(hdl.get()), std::move(crc)));
           }
           reply(sock, identity, res);
         }
@@ -180,7 +183,11 @@ void Server::worker(void)
         err.m_msg = ss.str();
         auto zone = std::make_unique<msgpack::zone>();
         auto rtnobj = msgpack::object(err, *zone);
-        res = std::make_unique<msgpack::object_handle>(rtnobj, std::move(zone));
+        auto hdl = msgpack::object_handle(rtnobj, std::move(zone));
+        std::uint32_t crc = CRC::Calculate(hdl.get().via.bin.ptr,
+                                           hdl.get().via.bin.size, m_crcTable);
+        res = std::make_unique<ReturnType>(
+            std::make_tuple(std::move(hdl.get()), std::move(crc)));
         reply(sock, identity, res);
       }
     }
@@ -194,7 +201,7 @@ void Server::worker(void)
 
 void Server::reply(zmq::socket_t &sock,
                    zmq::message_t &identity,
-                   std::unique_ptr<msgpack::object_handle> &res) const
+                   std::unique_ptr<ReturnType> &res) const
 {
   // Reply with the identity of the message for the broker
   zmq::message_t copied_id;
@@ -203,7 +210,7 @@ void Server::reply(zmq::socket_t &sock,
 
   // Pack the result into an object
   auto sbuf = std::make_shared<msgpack::sbuffer>();
-  msgpack::pack(*sbuf, res->get());
+  msgpack::pack(*sbuf, *res);
   (void)sock.send(zmq::const_buffer(sbuf->data(), sbuf->size()),
                   zmq::send_flags::none);
 }
