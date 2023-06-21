@@ -107,7 +107,7 @@ using isVoidReturn = std::is_void<typename callable_traits<F>::return_type>;
  * @tparam F Functor type to check the return type
  */
 template <typename F>
-using returnType = callable_traits<F>::return_type;
+using returnType = typename callable_traits<F>::return_type;
 
 /**
  * @brief Helper routine to get the number of arguments to F
@@ -115,7 +115,7 @@ using returnType = callable_traits<F>::return_type;
  * @tparam F Functor type to check number of arguments
  */
 template <typename F>
-using numArgs = callable_traits<F>::num_args;
+using numArgs = typename callable_traits<F>::num_args;
 
 /**
  * @brief Helper routine to get the types of arguments to F
@@ -123,7 +123,7 @@ using numArgs = callable_traits<F>::num_args;
  * @tparam F Functor type to check types of arguments
  */
 template <typename F>
-using typeArgs = callable_traits<F>::type_args;
+using typeArgs = typename callable_traits<F>::type_args;
 
 /**
  * @brief Call the function using C++17 fold expression for the arguments
