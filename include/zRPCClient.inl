@@ -32,45 +32,60 @@ namespace zRPC
 template <typename... A>
 msgpack::object_handle Client::call(const std::string &name, A... args)
 {
+  return call(-1, name, args...);
+}
+
+template <typename... A>
+msgpack::object_handle Client::call(int timeout,
+                                    const std::string &name,
+                                    A... args)
+{
   try
   {
     // Ensure socket is connected to the server
     zmq::socket_t l_sock(m_ctx, zmq::socket_type::dealer);
+    l_sock.set(zmq::sockopt::rcvtimeo, timeout);
+    // Clean out the memory after the socket is closed
+    l_sock.set(zmq::sockopt::linger, timeout);
     l_sock.set(zmq::sockopt::routing_id, m_idBase + std::to_string(m_idx++));
     l_sock.connect(m_uri);
 
-    if (l_sock)
+    // Create a tuple with the RPC name and arguments
+    auto args_tuple = std::make_tuple(args...);
+    auto call_tuple = std::make_tuple(name, args_tuple);
+
+    // Pack the tuple into a stringstream and calculate CRC
+    std::stringstream cbuf;
+    msgpack::pack(cbuf, call_tuple);
+    std::uint32_t crc =
+        CRC::Calculate(cbuf.str().data(), cbuf.str().size(), m_crcTable);
+    auto crc_tuple = std::make_tuple(cbuf.str(), crc);
+
+    // Pack the new tuple into an object and send to the server
+    auto sbuf = std::make_shared<msgpack::sbuffer>();
+    msgpack::pack(*sbuf, crc_tuple);
+    (void)l_sock.send(zmq::const_buffer(sbuf->data(), sbuf->size()));
+
+    // Wait for response or timeout event
+
+    zmq::message_t msg;
+    auto rxres = l_sock.recv(msg);
+    if (rxres && (rxres.value() > 0))
     {
-      // Create a tuple with the RPC name and arguments
-      auto args_tuple = std::make_tuple(args...);
-      auto call_tuple = std::make_tuple(name, args_tuple);
-
-      // Pack the tuple into a stringstream and calculate CRC
-      std::stringstream cbuf;
-      msgpack::pack(cbuf, call_tuple);
-      std::uint32_t crc =
-          CRC::Calculate(cbuf.str().data(), cbuf.str().size(), m_crcTable);
-      auto crc_tuple = std::make_tuple(cbuf.str(), crc);
-
-      // Pack the new tuple into an object and send to the server
-      auto sbuf = std::make_shared<msgpack::sbuffer>();
-      msgpack::pack(*sbuf, crc_tuple);
-      (void)l_sock.send(zmq::const_buffer(sbuf->data(), sbuf->size()));
-
-      // Wait for response
-      zmq::message_t msg;
-      auto rxres = l_sock.recv(msg);
-      if (rxres && (rxres.value() > 0))
-      {
-        auto obj = msgpack::unpack(static_cast<char *>(msg.data()), msg.size());
-        return obj;
-      }
+      auto obj = msgpack::unpack(static_cast<char *>(msg.data()), msg.size());
+      return obj;
+    }
+    else
+    {
+      std::cout << " ! ZMQ Warning server is not responding, request <" << name
+                << "> is dropped !" << std::endl;
     }
   }
   catch (const zmq::error_t &e)
   {
     std::cerr << " !! ZMQ Error " << e.num() << ": " << e.what() << std::endl;
   }
+
   return msgpack::object_handle();
 }
 }  // namespace zRPC

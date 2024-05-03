@@ -84,6 +84,10 @@ target_compile_options(${PROJECT_NAME} PUBLIC ${compile_options})
 # Test applications
 ###############################################################################
 if (ZRPC_BUILD_TESTS)
+  add_executable(clientDetached tests/clientDetached.cpp)
+  target_link_libraries(clientDetached zRPC)
+  target_compile_options(clientDetached PUBLIC ${compile_options})
+
   add_executable(client tests/client.cpp)
   target_link_libraries(client zRPC)
   target_compile_options(client PUBLIC ${compile_options})

@@ -45,7 +45,6 @@
 
 namespace zRPC
 {
-
 /**
  * @class Server zRPC.hpp "zRPC.hpp"
  *
@@ -233,20 +232,34 @@ public:
    * @param[in] identity Identity string to use for the client.
    * @param[in] uri Zero-MQ address:port to bind listening socket to.
    */
-  explicit Client(const std::string &identity,
-                  const std::string &uri);
+  explicit Client(const std::string &identity, const std::string &uri);
 
   /**
    * @brief Call the RPC with the given name and given arguments
    *
    * @tparam A Variadic argument list
-   * @param[in] name Name of the RPC to call on the remote serveer
+   * @param[in] name Name of the RPC to call on the remote server
    * @param[in] args Variadic argument list to pass to the remote server
    * @return msgpack::object_handle MessagePack'd object handle containing
    * server response (if any)
    */
   template <typename... A>
   msgpack::object_handle call(const std::string &name, A... args);
+
+  /**
+   * @brief Call the RPC with the given name and given arguments
+   *
+   * @tparam A Variadic argument list
+   * @param[in] timeout Timeout in ms before dropping the request
+   * @param[in] name Name of the RPC to call on the remote server
+   * @param[in] args Variadic argument list to pass to the remote server
+   * @return msgpack::object_handle MessagePack'd object handle containing
+   * server response (if any)
+   */
+  template <typename... A>
+  msgpack::object_handle call(const int timeout,
+                              const std::string &name,
+                              A... args);
 };
 
 /**
