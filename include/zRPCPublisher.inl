@@ -44,12 +44,15 @@ void Publisher::publish(const std::string &topic, T &data)
       // Create a tuple with the topic name, packed data, and CRC
       auto data_tuple = std::make_tuple(topic, cbuf.str(), crc);
 
-      // Pack the new tuple into an object and send to the server
+      // Pack the new tuple into an object and send it after the topic. The
+      // topic travels in a frame of its own so that subscribers can match it
+      // exactly, whatever characters it contains.
       auto sbuf = std::make_shared<msgpack::sbuffer>();
       msgpack::pack(*sbuf, data_tuple);
-      const auto sndbuf = topic + ":" + std::string(sbuf->data(), sbuf->size());
       std::lock_guard<std::mutex> lock(m_mutex);
-      (void)m_pub.send(zmq::const_buffer(sndbuf.c_str(), sndbuf.length()));
+      (void)m_pub.send(zmq::buffer(topic), zmq::send_flags::sndmore);
+      (void)m_pub.send(zmq::const_buffer(sbuf->data(), sbuf->size()),
+                       zmq::send_flags::none);
     }
   }
   catch (const zmq::error_t &e)

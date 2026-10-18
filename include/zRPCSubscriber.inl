@@ -59,19 +59,35 @@ void Subscriber::handler(const std::string &uri,
 
     while (m_running)
     {
+      // A publication is two frames: [topic][data]
+      zmq::message_t rtopicMsg;
       zmq::message_t msg;
+      (void)sock.recv(rtopicMsg, zmq::recv_flags::none);
+      if (!rtopicMsg.more())
+      {
+        continue;
+      }
       (void)sock.recv(msg, zmq::recv_flags::none);
+      for (bool more = msg.more(); more;)
+      {
+        zmq::message_t extra;
+        (void)sock.recv(extra, zmq::recv_flags::none);
+        more = extra.more();
+      }
+
+      // 0MQ subscriptions match on prefix, so "A" also receives "ABC"; only
+      // an empty topic means every topic
+      if (!topic.empty() && rtopicMsg.to_string_view() != topic)
+      {
+        continue;
+      }
 
       try
       {
-        // Trim the topic from the beginning of the message for proper unpacking
-        std::string message(static_cast<char *>(msg.data()), msg.size());
-        message.erase(0, message.find_first_of(':') + 1);
-
         // Unpack the message to the topic/data/CRC tuple
         auto data_tuple =
-            msgpack::unpack(message.data(), message.length(), nullptr,
-                            nullptr, detail::unpackLimits());
+            msgpack::unpack(static_cast<const char *>(msg.data()), msg.size(),
+                            nullptr, nullptr, detail::unpackLimits());
         std::tuple<std::string, std::string, std::uint32_t> pubdata;
         data_tuple.get().convert(pubdata);
 
