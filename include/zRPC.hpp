@@ -258,14 +258,9 @@ private:
   zmq::context_t m_ctx;
 
   /**
-   * @brief Identity base string to discriminate between connections
+   * @brief Name of this client, used in diagnostics
    */
-  std::string m_idBase;
-
-  /**
-   * @brief Index of the RPC call from the same client
-   */
-  uint64_t m_idx{0};
+  std::string m_identity;
 
   /**
    * @brief URI of the server (protocol and address:port) to connect to on each
@@ -282,10 +277,11 @@ public:
   /**
    * @brief Construct a new zRPC::Client object
    *
-   * This will establish the connection with the server and configure the 0MQ
-   * identity for the client.
+   * Each call connects to the server separately and 0MQ assigns every
+   * connection a routing ID that is unique on the server, so any number of
+   * clients (in any number of processes) may share the same identity string.
    *
-   * @param[in] identity Identity string to use for the client.
+   * @param[in] identity Name of the client, used in diagnostics.
    * @param[in] uri Zero-MQ address:port to bind listening socket to.
    */
   explicit Client(const std::string &identity, const std::string &uri);

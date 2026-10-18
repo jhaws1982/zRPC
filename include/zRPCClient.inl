@@ -47,7 +47,6 @@ msgpack::object_handle Client::call(int timeout,
     l_sock.set(zmq::sockopt::rcvtimeo, timeout);
     // Clean out the memory after the socket is closed
     l_sock.set(zmq::sockopt::linger, timeout);
-    l_sock.set(zmq::sockopt::routing_id, m_idBase + std::to_string(m_idx++));
     l_sock.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
     l_sock.connect(m_uri);
 
@@ -80,7 +79,8 @@ msgpack::object_handle Client::call(int timeout,
     else
     {
       std::cout << " ! ZMQ Warning server is not responding, request <" << name
-                << "> is dropped !" << std::endl;
+                << "> from client <" << m_identity << "> is dropped !"
+                << std::endl;
     }
   }
   catch (const zmq::error_t &e)
