@@ -35,6 +35,16 @@ using namespace zRPC;
 namespace
 {
 /**
+ * @brief Server whose worker is running on this thread, if any
+ */
+thread_local const Server *t_worker = nullptr;
+
+/**
+ * @brief Set when a bound RPC running on this thread asked its server to stop
+ */
+thread_local bool t_stopAfterReply = false;
+
+/**
  * @brief Build a response carrying a zRPC::Error with the given message
  *
  * @param[in] msg Error message for the client
@@ -114,19 +124,33 @@ void Server::start(void)
 
 void Server::stop(void)
 {
+  // Clear the running flag. When a bound RPC calls this, its worker shuts the
+  // context down after sending the RPC's reply; otherwise do it now. Final
+  // cleanup will take place in the destructor.
+  m_running = false;
+  if (t_worker == this)
+  {
+    t_stopAfterReply = true;
+  }
+  else
+  {
+    shutdown();
+  }
+}
+
+void Server::shutdown(void)
+{
   // HACK: 0MQ does not have a way to flush output buffers, so to terminate
   // properly we need to have a short delay to ensure that the buffers are
   // cleared before shutting down the context.
   std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-  // Clear the running flag and shutdown the context. Final cleanup will take
-  // place in the destructor.
-  m_running = false;
   m_ctx.shutdown();
 }
 
 void Server::worker(void)
 {
+  t_worker = this;
+
   try
   {
     zmq::socket_t sock(m_ctx, zmq::socket_type::dealer);
@@ -143,10 +167,9 @@ void Server::worker(void)
       // exception thrown by a bound function is reported back to the client
       // rather than escaping this thread and terminating the whole server.
       std::unique_ptr<msgpack::object_handle> res;
-      bool terminate = false;
       try
       {
-        res = process(msg, terminate);
+        res = process(msg);
       }
       catch (const zmq::error_t &)
       {
@@ -162,9 +185,10 @@ void Server::worker(void)
       }
       reply(sock, identity, res);
 
-      if (terminate)
+      if (t_stopAfterReply)
       {
-        stop();
+        // A bound RPC called stop() and its reply is now on its way
+        shutdown();
       }
     }
   }
@@ -176,7 +200,7 @@ void Server::worker(void)
 }
 
 std::unique_ptr<msgpack::object_handle> Server::process(
-    const zmq::message_t &msg, bool &terminate)
+    const zmq::message_t &msg)
 {
   // Unpack and convert the message and CRC
   auto crcdata =
@@ -207,13 +231,6 @@ std::unique_ptr<msgpack::object_handle> Server::process(
 
   auto &&name = std::get<0>(rpc);
   auto &&args = std::get<1>(rpc);
-
-  if ("terminate" == name)
-  {
-    // Respond with an empty message, then stop the server
-    terminate = true;
-    return std::make_unique<msgpack::object_handle>();
-  }
 
   // Call the RPC
   auto rpcIt = m_rpcs.find(name);

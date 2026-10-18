@@ -70,11 +70,6 @@ Message &f4(Message &m)
   return m;
 }
 
-void terminate(void)
-{
-  return;
-}
-
 int main(void)
 {
   //  Prepare our context and socket
@@ -101,7 +96,7 @@ int main(void)
              return a + b;
            });
   srv.bind("fNS", &TestNS::fNS);
-  srv.bind("terminate", &terminate); // for terminating
+  srv.bind("terminate", [&srv]() { srv.stop(); });  // for terminating
   srv.start();
 
   std::cout << "Exiting server!" << std::endl;
