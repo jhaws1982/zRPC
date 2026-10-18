@@ -81,6 +81,7 @@ Server::Server(const std::string &uri, const uint32_t nWorkers) :
     m_ctx(16),
     m_brokerFrontend(m_ctx, zmq::socket_type::router),
     m_brokerBackend(m_ctx, zmq::socket_type::router),
+    m_nWorkers(nWorkers),
     m_crcTable(CRC::CRC_32())
 {
   // Start the broker sockets and bind to their ports. Peers sending larger
@@ -91,11 +92,6 @@ Server::Server(const std::string &uri, const uint32_t nWorkers) :
   m_brokerBackend.bind("inproc://backend");
 
   m_running = true;
-  for (uint32_t n = 0; n < nWorkers; ++n)
-  {
-    // Create and connect the worker sockets now
-    m_th.emplace_back(std::thread([this]() { worker(); }));
-  }
 }
 
 Server::~Server()
@@ -115,6 +111,19 @@ Server::~Server()
 
 void Server::start(void)
 {
+  if (m_started.exchange(true))
+  {
+    throw std::logic_error("zRPC::Server::start() may only be called once.");
+  }
+
+  // Workers are created here rather than in the constructor so that every
+  // RPC bound beforehand is visible to them (thread creation synchronises),
+  // and bind() refuses to change the map from now on.
+  for (uint32_t n = 0; n < m_nWorkers; ++n)
+  {
+    m_th.emplace_back([this]() { worker(); });
+  }
+
   // Routing IDs of the workers waiting for a request. Requests only go to an
   // idle worker, so one slow RPC never delays another while a worker is free.
   // (A plain proxy to a DEALER hands requests out round-robin, queueing them

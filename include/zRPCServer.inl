@@ -30,6 +30,14 @@ namespace zRPC
 template <typename F>
 void Server::bind(const std::string &name, F func)
 {
+  // Workers read the RPC map without locking, so it must not change once
+  // they exist
+  if (m_started)
+  {
+    throw std::logic_error("'" + name +
+                           "' must be bound before the server is started.");
+  }
+
   if (m_rpcs.find(name) == m_rpcs.end())
   {
     insertFunc<F>(name, func, typename support::callable_traits<F>::f_rtn());
