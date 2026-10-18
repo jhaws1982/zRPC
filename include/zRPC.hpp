@@ -32,6 +32,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <tuple>
 #include <unordered_map>
@@ -117,9 +118,20 @@ private:
   std::vector<std::thread> m_th;
 
   /**
+   * @brief Number of worker threads start() creates
+   */
+  uint32_t m_nWorkers;
+
+  /**
    * @brief Flag indicating that the server is currently running
    */
   std::atomic<bool> m_running{false};
+
+  /**
+   * @brief Flag indicating that start() has been called; the RPC map is
+   * read-only from then on
+   */
+  std::atomic<bool> m_started{false};
 
   /**
    * @brief CRC table for use in efficient CRC calculations
@@ -184,9 +196,12 @@ public:
   ~Server();
 
   /**
-   * @brief Run the broker that hands client requests to idle workers
+   * @brief Start the worker threads and run the broker that hands client
+   * requests to idle workers
    *
-   * Blocks until stop() is called.
+   * Blocks until stop() is called. Bind every RPC before calling this.
+   *
+   * @throws std::logic_error if the server has already been started
    */
   void start(void);
 
@@ -209,6 +224,8 @@ public:
    * @tparam F Callable type to bind (auto-detected by compiler)
    * @param[in] name Name of the RPC
    * @param[in] func Callable object to bind to the RPC name
+   * @throws std::logic_error if the server has already been started
+   * @throws std::runtime_error if the name is already bound
    */
   template <typename F>
   void bind(const std::string &name, F func);
@@ -357,6 +374,12 @@ private:
   zmq::socket_t m_pub;
 
   /**
+   * @brief Serialises use of the publisher socket, which 0MQ does not allow
+   * from several threads at once
+   */
+  std::mutex m_mutex;
+
+  /**
    * @brief CRC table for use in efficient CRC calculations
    */
   CRC::Table<std::uint32_t, 32> m_crcTable;
@@ -382,6 +405,8 @@ public:
 
   /**
    * @brief Publish a MessagePack-able object using the given topic name
+   *
+   * Safe to call from several threads at once.
    *
    * @tparam T MessagePack-able object type
    * @param[in] topic Name of the topic to publish to
@@ -417,6 +442,11 @@ private:
   std::vector<std::thread> m_handlers;
 
   /**
+   * @brief Guards m_handlers against concurrent subscribe() calls
+   */
+  std::mutex m_handlersMutex;
+
+  /**
    * @brief Flag indicating whether the zRPC::Subscriber object is running
    */
   std::atomic<bool> m_running{false};
@@ -449,6 +479,9 @@ public:
   /**
    * @brief Subscribe to a topic on the publisher at the provided URI and call
    * the callback function for each message received.
+   *
+   * Safe to call from several threads at once. Each subscription runs its
+   * callback on its own thread.
    *
    * @note In order to use this function properly, the received object type must
    * be specified in the call, like this:

@@ -38,6 +38,7 @@ void Subscriber::subscribe(const std::string &uri,
                            cb_type<T> cb)
 {
   m_running = true;
+  std::lock_guard<std::mutex> lock(m_handlersMutex);
   m_handlers.emplace_back(
       std::thread([this, uri, topic, cb]() { handler<T>(uri, topic, cb); }));
 }

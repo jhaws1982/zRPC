@@ -48,6 +48,7 @@ void Publisher::publish(const std::string &topic, T &data)
       auto sbuf = std::make_shared<msgpack::sbuffer>();
       msgpack::pack(*sbuf, data_tuple);
       const auto sndbuf = topic + ":" + std::string(sbuf->data(), sbuf->size());
+      std::lock_guard<std::mutex> lock(m_mutex);
       (void)m_pub.send(zmq::const_buffer(sndbuf.c_str(), sndbuf.length()));
     }
   }

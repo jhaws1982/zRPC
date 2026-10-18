@@ -39,6 +39,7 @@ Subscriber::~Subscriber()
   m_running = false;
   m_ctx.shutdown();
 
+  std::lock_guard<std::mutex> lock(m_handlersMutex);
   for (auto &th : m_handlers)
   {
     if (th.joinable())
