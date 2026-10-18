@@ -29,10 +29,9 @@
 
 using namespace zRPC;
 
-Client::Client(const std::string &identity,
-               const std::string &uri) :
+Client::Client(const std::string &identity, const std::string &uri) :
     m_ctx(1),
-    m_idBase(identity),
+    m_identity(identity),
     m_uri(uri),
     m_crcTable(CRC::CRC_32())
 {
