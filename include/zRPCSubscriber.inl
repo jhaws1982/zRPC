@@ -113,16 +113,23 @@ void Subscriber::handler(const std::string &uri,
                     << " != " << check << "=Check" << std::endl;
         }
       }
-      catch (const msgpack::v1::type_error &e)
+      catch (const std::exception &e)
       {
-        std::cerr << " !! MessagePack Type Error: " << e.what() << std::endl;
+        // A message that cannot be decoded, or a callback that throws, must
+        // not end the subscription or, by escaping this thread, the process
+        std::cerr << " !! Subscriber Error on topic '" << topic
+                  << "': " << e.what() << std::endl;
       }
     }
   }
   catch (const zmq::error_t &e)
   {
-    std::cerr << " !! ZMQ Worker Error " << e.num() << ": " << e.what()
-              << std::endl;
+    // ETERM means the Subscriber is being destroyed, which is a normal exit
+    if (e.num() != ETERM)
+    {
+      std::cerr << " !! ZMQ Subscriber Error " << e.num() << ": " << e.what()
+                << std::endl;
+    }
   }
 }
 
