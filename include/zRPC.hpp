@@ -289,6 +289,11 @@ private:
   std::string m_uri;
 
   /**
+   * @brief Timeout in ms used by calls that do not specify one (-1 = none)
+   */
+  int m_timeout;
+
+  /**
    * @brief CRC table for use in efficient CRC calculations
    */
   CRC::Table<std::uint32_t, 32> m_crcTable;
@@ -303,11 +308,17 @@ public:
    *
    * @param[in] identity Name of the client, used in diagnostics.
    * @param[in] uri Zero-MQ address:port to bind listening socket to.
+   * @param[in] timeout Timeout in ms for calls that do not pass their own,
+   * default = 30 s. -1 waits forever, which hangs the call if the server is
+   * down.
    */
-  explicit Client(const std::string &identity, const std::string &uri);
+  explicit Client(const std::string &identity,
+                  const std::string &uri,
+                  int timeout = 30000);
 
   /**
-   * @brief Call the RPC with the given name and given arguments
+   * @brief Call the RPC with the given name and given arguments, using the
+   * client's default timeout
    *
    * @tparam A Variadic argument list
    * @param[in] name Name of the RPC to call on the remote server
@@ -321,8 +332,11 @@ public:
   /**
    * @brief Call the RPC with the given name and given arguments
    *
+   * @note A request that times out may still have reached the server, which
+   * then runs the RPC (with any side effects) and discards the reply.
+   *
    * @tparam A Variadic argument list
-   * @param[in] timeout Timeout in ms before dropping the request
+   * @param[in] timeout Timeout in ms before dropping the request, -1 = none
    * @param[in] name Name of the RPC to call on the remote server
    * @param[in] args Variadic argument list to pass to the remote server
    * @return msgpack::object_handle MessagePack'd object handle containing

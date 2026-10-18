@@ -29,10 +29,13 @@
 
 using namespace zRPC;
 
-Client::Client(const std::string &identity, const std::string &uri) :
+Client::Client(const std::string &identity,
+               const std::string &uri,
+               int timeout) :
     m_ctx(1),
     m_identity(identity),
     m_uri(uri),
+    m_timeout(timeout),
     m_crcTable(CRC::CRC_32())
 {
 }

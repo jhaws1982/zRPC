@@ -32,7 +32,7 @@ namespace zRPC
 template <typename... A>
 msgpack::object_handle Client::call(const std::string &name, A... args)
 {
-  return call(-1, name, args...);
+  return call(m_timeout, name, args...);
 }
 
 template <typename... A>
@@ -45,8 +45,9 @@ msgpack::object_handle Client::call(int timeout,
     // Ensure socket is connected to the server
     zmq::socket_t l_sock(m_ctx, zmq::socket_type::dealer);
     l_sock.set(zmq::sockopt::rcvtimeo, timeout);
-    // Clean out the memory after the socket is closed
-    l_sock.set(zmq::sockopt::linger, timeout);
+    // Once the call returns nothing on this socket is worth delivering; an
+    // unsent request after a timeout must not hold up closing the context
+    l_sock.set(zmq::sockopt::linger, 0);
     l_sock.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
     l_sock.connect(m_uri);
 
