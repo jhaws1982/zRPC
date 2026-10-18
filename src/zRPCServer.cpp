@@ -28,6 +28,7 @@
 #include "zRPC.hpp"
 
 #include <csignal>
+#include <deque>
 #include <iostream>
 
 using namespace zRPC;
@@ -43,6 +44,17 @@ thread_local const Server *t_worker = nullptr;
  * @brief Set when a bound RPC running on this thread asked its server to stop
  */
 thread_local bool t_stopAfterReply = false;
+
+/**
+ * @brief Control message a worker sends the broker when it is ready for work
+ */
+constexpr char kReady[] = "READY";
+
+/**
+ * @brief Control message a worker sends the broker after replying to an RPC
+ * that called stop()
+ */
+constexpr char kStop[] = "STOP";
 
 /**
  * @brief Build a response carrying a zRPC::Error with the given message
@@ -65,11 +77,10 @@ Server::Server(const uint16_t port, const uint32_t nWorkers) :
 {
 }
 
-Server::Server(const std::string &uri,
-               const uint32_t nWorkers) :
+Server::Server(const std::string &uri, const uint32_t nWorkers) :
     m_ctx(16),
     m_brokerFrontend(m_ctx, zmq::socket_type::router),
-    m_brokerBackend(m_ctx, zmq::socket_type::dealer),
+    m_brokerBackend(m_ctx, zmq::socket_type::router),
     m_crcTable(CRC::CRC_32())
 {
   // Start the broker sockets and bind to their ports. Peers sending larger
@@ -104,23 +115,90 @@ Server::~Server()
 
 void Server::start(void)
 {
-  // Start the proxy to connect multiple clients to multiple workers
+  // Routing IDs of the workers waiting for a request. Requests only go to an
+  // idle worker, so one slow RPC never delays another while a worker is free.
+  // (A plain proxy to a DEALER hands requests out round-robin, queueing them
+  // behind busy workers.)
+  std::deque<zmq::message_t> idle;
+
   try
   {
-    zmq::proxy(m_brokerFrontend, m_brokerBackend);
+    while (true)
+    {
+      zmq::pollitem_t items[] = {
+          {m_brokerBackend.handle(), 0, ZMQ_POLLIN, 0},
+          {m_brokerFrontend.handle(), 0, ZMQ_POLLIN, 0},
+      };
+
+      // While every worker is busy, leave client requests queued in 0MQ
+      zmq::poll(items, idle.empty() ? 1U : 2U, std::chrono::milliseconds{-1});
+
+      if (items[0].revents & ZMQ_POLLIN)
+      {
+        // From a worker: [worker][client][reply] or [worker][control]
+        zmq::message_t worker;
+        zmq::message_t frame;
+        (void)m_brokerBackend.recv(worker);
+        (void)m_brokerBackend.recv(frame);
+
+        if (frame.more())
+        {
+          // Forward the reply to the client; the worker is free again
+          zmq::message_t reply;
+          (void)m_brokerBackend.recv(reply);
+          (void)m_brokerFrontend.send(frame, zmq::send_flags::sndmore);
+          (void)m_brokerFrontend.send(reply, zmq::send_flags::none);
+          idle.push_back(std::move(worker));
+        }
+        else if (frame.to_string_view() == kStop)
+        {
+          // A bound RPC called stop() and its reply has just been forwarded
+          shutdown();
+        }
+        else
+        {
+          idle.push_back(std::move(worker));
+        }
+      }
+
+      if (items[1].revents & ZMQ_POLLIN)
+      {
+        // From a client: [client][request]. A request is a single frame;
+        // discard any extra frames so they cannot be taken for the next one.
+        zmq::message_t client;
+        zmq::message_t request;
+        (void)m_brokerFrontend.recv(client);
+        (void)m_brokerFrontend.recv(request);
+        for (bool more = request.more(); more;)
+        {
+          zmq::message_t extra;
+          (void)m_brokerFrontend.recv(extra);
+          more = extra.more();
+        }
+
+        (void)m_brokerBackend.send(idle.front(), zmq::send_flags::sndmore);
+        idle.pop_front();
+        (void)m_brokerBackend.send(client, zmq::send_flags::sndmore);
+        (void)m_brokerBackend.send(request, zmq::send_flags::none);
+      }
+    }
   }
   catch (const zmq::error_t &e)
   {
-    std::cerr << " !! ZMQ Proxy Error " << e.num() << ": " << e.what()
-              << std::endl;
+    // ETERM means stop() shut the context down, which is a normal exit
+    if (e.num() != ETERM)
+    {
+      std::cerr << " !! ZMQ Broker Error " << e.num() << ": " << e.what()
+                << std::endl;
+    }
   }
 }
 
 void Server::stop(void)
 {
-  // Clear the running flag. When a bound RPC calls this, its worker shuts the
-  // context down after sending the RPC's reply; otherwise do it now. Final
-  // cleanup will take place in the destructor.
+  // Clear the running flag. When a bound RPC calls this, the broker shuts the
+  // context down once it has forwarded that RPC's reply; otherwise do it now.
+  // Final cleanup will take place in the destructor.
   m_running = false;
   if (t_worker == this)
   {
@@ -134,10 +212,8 @@ void Server::stop(void)
 
 void Server::shutdown(void)
 {
-  // HACK: 0MQ does not have a way to flush output buffers, so to terminate
-  // properly we need to have a short delay to ensure that the buffers are
-  // cleared before shutting down the context.
-  std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  // Replies already handed to the frontend socket are still delivered: the
+  // socket lingers until they are sent when it is closed in the destructor.
   m_ctx.shutdown();
 }
 
@@ -149,6 +225,9 @@ void Server::worker(void)
   {
     zmq::socket_t sock(m_ctx, zmq::socket_type::dealer);
     sock.connect("inproc://backend");
+
+    // Tell the broker this worker is ready for its first request
+    (void)sock.send(zmq::str_buffer(kReady), zmq::send_flags::none);
 
     while (m_running)
     {
@@ -181,15 +260,21 @@ void Server::worker(void)
 
       if (t_stopAfterReply)
       {
-        // A bound RPC called stop() and its reply is now on its way
-        shutdown();
+        // A bound RPC called stop(). This follows the reply down the same
+        // pipe, so the broker only shuts down after forwarding the reply.
+        (void)sock.send(zmq::str_buffer(kStop), zmq::send_flags::none);
+        break;
       }
     }
   }
   catch (const zmq::error_t &e)
   {
-    std::cerr << " !! ZMQ Worker Error " << e.num() << ": " << e.what()
-              << std::endl;
+    // ETERM means stop() shut the context down, which is a normal exit
+    if (e.num() != ETERM)
+    {
+      std::cerr << " !! ZMQ Worker Error " << e.num() << ": " << e.what()
+                << std::endl;
+    }
   }
 }
 

@@ -106,7 +106,7 @@ private:
   zmq::socket_t m_brokerFrontend;
 
   /**
-   * @brief Zero-MQ RPC broker back-end socket (DEALER)
+   * @brief Zero-MQ RPC broker back-end socket (ROUTER) for the workers
    */
   zmq::socket_t m_brokerBackend;
 
@@ -183,7 +183,9 @@ public:
   ~Server();
 
   /**
-   * @brief Start listening for client connections and setup worker pool
+   * @brief Run the broker that hands client requests to idle workers
+   *
+   * Blocks until stop() is called.
    */
   void start(void);
 
