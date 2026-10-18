@@ -50,6 +50,7 @@ void Subscriber::handler(const std::string &uri,
   try
   {
     zmq::socket_t sock(m_ctx, zmq::socket_type::sub);
+    sock.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
     sock.connect(uri);
 
     // Setup the subscription to the specific topic
@@ -67,7 +68,9 @@ void Subscriber::handler(const std::string &uri,
         message.erase(0, message.find_first_of(':') + 1);
 
         // Unpack the message to the topic/data/CRC tuple
-        auto data_tuple = msgpack::unpack(message.data(), message.length());
+        auto data_tuple =
+            msgpack::unpack(message.data(), message.length(), nullptr,
+                            nullptr, detail::unpackLimits());
         std::tuple<std::string, std::string, std::uint32_t> pubdata;
         data_tuple.get().convert(pubdata);
 
@@ -82,7 +85,8 @@ void Subscriber::handler(const std::string &uri,
           // Unpack the data to published data type
           T d;
           auto data_obj =
-              msgpack::unpack(static_cast<char *>(rdata.data()), rdata.size());
+              msgpack::unpack(rdata.data(), rdata.size(), nullptr, nullptr,
+                              detail::unpackLimits());
           data_obj.get().convert(d);
           cb(rtopic, d);
         }
