@@ -45,6 +45,35 @@
 
 namespace zRPC
 {
+namespace detail
+{
+/**
+ * @brief Largest single message accepted from a peer, in bytes
+ */
+inline constexpr std::int64_t kMaxMessageSize = 64 * 1024 * 1024;
+
+/**
+ * @brief Limits applied when unpacking data received from a peer
+ *
+ * MessagePack allocates storage for an array or map as soon as it reads the
+ * header, before checking that the elements are present, so a few hostile
+ * bytes could otherwise demand gigabytes. Strings and binary data are only
+ * copied once their bytes have arrived, so they are bounded by message size.
+ *
+ * @return msgpack::unpack_limit Limits to pass to msgpack::unpack
+ */
+inline msgpack::unpack_limit unpackLimits()
+{
+  constexpr auto maxBytes = static_cast<std::size_t>(kMaxMessageSize);
+  return msgpack::unpack_limit(/* array */ 1U << 17,
+                               /* map */ 1U << 16,
+                               /* str */ maxBytes,
+                               /* bin */ maxBytes,
+                               /* ext */ maxBytes,
+                               /* depth */ 16);
+}
+}  // namespace detail
+
 /**
  * @class Server zRPC.hpp "zRPC.hpp"
  *

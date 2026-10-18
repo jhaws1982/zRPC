@@ -64,7 +64,9 @@ Server::Server(const std::string &uri,
 {
   try
   {
-    // Start the broker sockets and bind to their ports
+    // Start the broker sockets and bind to their ports. Peers sending larger
+    // messages are disconnected by 0MQ before the data reaches a worker.
+    m_brokerFrontend.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
     m_brokerFrontend.bind(uri);
     m_brokerBackend.bind("inproc://backend");
   }
@@ -178,7 +180,8 @@ std::unique_ptr<msgpack::object_handle> Server::process(
 {
   // Unpack and convert the message and CRC
   auto crcdata =
-      msgpack::unpack(static_cast<const char *>(msg.data()), msg.size());
+      msgpack::unpack(static_cast<const char *>(msg.data()), msg.size(),
+                      nullptr, nullptr, detail::unpackLimits());
   std::tuple<std::string, std::uint32_t> crcrpc;
   crcdata.get().convert(crcrpc);
 
@@ -198,8 +201,8 @@ std::unique_ptr<msgpack::object_handle> Server::process(
 
   // Unpack and convert RPC name and arguments
   std::tuple<std::string, msgpack::object> rpc;
-  auto data =
-      msgpack::unpack(static_cast<char *>(rpcmsg.data()), rpcmsg.size());
+  auto data = msgpack::unpack(rpcmsg.data(), rpcmsg.size(), nullptr, nullptr,
+                              detail::unpackLimits());
   data.get().convert(rpc);
 
   auto &&name = std::get<0>(rpc);

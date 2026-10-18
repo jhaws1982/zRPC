@@ -48,6 +48,7 @@ msgpack::object_handle Client::call(int timeout,
     // Clean out the memory after the socket is closed
     l_sock.set(zmq::sockopt::linger, timeout);
     l_sock.set(zmq::sockopt::routing_id, m_idBase + std::to_string(m_idx++));
+    l_sock.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
     l_sock.connect(m_uri);
 
     // Create a tuple with the RPC name and arguments
@@ -72,7 +73,8 @@ msgpack::object_handle Client::call(int timeout,
     auto rxres = l_sock.recv(msg);
     if (rxres && (rxres.value() > 0))
     {
-      auto obj = msgpack::unpack(static_cast<char *>(msg.data()), msg.size());
+      auto obj = msgpack::unpack(static_cast<char *>(msg.data()), msg.size(),
+                                 nullptr, nullptr, detail::unpackLimits());
       return obj;
     }
     else
