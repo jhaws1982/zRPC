@@ -32,6 +32,24 @@
 
 using namespace zRPC;
 
+namespace
+{
+/**
+ * @brief Build a response carrying a zRPC::Error with the given message
+ *
+ * @param[in] msg Error message for the client
+ * @return std::unique_ptr<msgpack::object_handle> Response to send back
+ */
+std::unique_ptr<msgpack::object_handle> errorResponse(const std::string &msg)
+{
+  Error err;
+  err.m_msg = msg;
+  auto zone = std::make_unique<msgpack::zone>();
+  auto rtnobj = msgpack::object(err, *zone);
+  return std::make_unique<msgpack::object_handle>(rtnobj, std::move(zone));
+}
+}  // namespace
+
 Server::Server(const uint16_t port, const uint32_t nWorkers) :
     Server("tcp://*:" + std::to_string(port), nWorkers)
 {
@@ -119,69 +137,32 @@ void Server::worker(void)
       (void)sock.recv(identity);
       (void)sock.recv(msg);
 
-      // Unpack and convert the message and CRC
-      auto crcdata =
-          msgpack::unpack(static_cast<char *>(msg.data()), msg.size());
-      std::tuple<std::string, std::uint32_t> crcrpc;
-      crcdata.get().convert(crcrpc);
-
-      auto &&rpcmsg = std::get<0>(crcrpc);
-      auto &&crc = std::get<1>(crcrpc);
-      std::uint32_t check =
-          CRC::Calculate(rpcmsg.data(), rpcmsg.size(), m_crcTable);
-
-      std::unique_ptr<msgpack::v1::object_handle> res;
-      if (check == crc)
+      // Every request gets exactly one reply. A malformed request or an
+      // exception thrown by a bound function is reported back to the client
+      // rather than escaping this thread and terminating the whole server.
+      std::unique_ptr<msgpack::object_handle> res;
+      bool terminate = false;
+      try
       {
-        // Unpack and convert RPC name and arguments
-        std::tuple<std::string, msgpack::object> rpc;
-        auto data =
-            msgpack::unpack(static_cast<char *>(rpcmsg.data()), rpcmsg.size());
-        data.get().convert(rpc);
-
-        // Call the RPC
-        auto &&name = std::get<0>(rpc);
-        auto &&args = std::get<1>(rpc);
-
-        if ("terminate" == name)
-        {
-          // Respond with an empty message
-          res = std::make_unique<msgpack::object_handle>();
-          reply(sock, identity, res);
-
-          // Now stop the server
-          stop();
-        }
-        else
-        {
-          if (m_rpcs.find(name) != m_rpcs.end())
-          {
-            res = m_rpcs.at(name)(args);
-          }
-          else
-          {
-            Error err;
-            err.m_msg = "'" + name + "' RPC not found!";
-            auto zone = std::make_unique<msgpack::zone>();
-            auto rtnobj = msgpack::object(err, *zone);
-            res = std::make_unique<msgpack::object_handle>(rtnobj,
-                                                           std::move(zone));
-          }
-          reply(sock, identity, res);
-        }
+        res = process(msg, terminate);
       }
-      else
+      catch (const zmq::error_t &)
       {
-        Error err;
-        std::stringstream ss;
-        ss << std::hex << "Bad checksum: CRC=" << crc << " != " << check
-           << "=Checked";
-        std::cout << ss.str() << std::endl;
-        err.m_msg = ss.str();
-        auto zone = std::make_unique<msgpack::zone>();
-        auto rtnobj = msgpack::object(err, *zone);
-        res = std::make_unique<msgpack::object_handle>(rtnobj, std::move(zone));
-        reply(sock, identity, res);
+        throw;
+      }
+      catch (const std::exception &e)
+      {
+        res = errorResponse(e.what());
+      }
+      catch (...)
+      {
+        res = errorResponse("Unknown exception");
+      }
+      reply(sock, identity, res);
+
+      if (terminate)
+      {
+        stop();
       }
     }
   }
@@ -190,6 +171,54 @@ void Server::worker(void)
     std::cerr << " !! ZMQ Worker Error " << e.num() << ": " << e.what()
               << std::endl;
   }
+}
+
+std::unique_ptr<msgpack::object_handle> Server::process(
+    const zmq::message_t &msg, bool &terminate)
+{
+  // Unpack and convert the message and CRC
+  auto crcdata =
+      msgpack::unpack(static_cast<const char *>(msg.data()), msg.size());
+  std::tuple<std::string, std::uint32_t> crcrpc;
+  crcdata.get().convert(crcrpc);
+
+  auto &&rpcmsg = std::get<0>(crcrpc);
+  auto &&crc = std::get<1>(crcrpc);
+  std::uint32_t check =
+      CRC::Calculate(rpcmsg.data(), rpcmsg.size(), m_crcTable);
+
+  if (check != crc)
+  {
+    std::stringstream ss;
+    ss << std::hex << "Bad checksum: CRC=" << crc << " != " << check
+       << "=Checked";
+    std::cout << ss.str() << std::endl;
+    return errorResponse(ss.str());
+  }
+
+  // Unpack and convert RPC name and arguments
+  std::tuple<std::string, msgpack::object> rpc;
+  auto data =
+      msgpack::unpack(static_cast<char *>(rpcmsg.data()), rpcmsg.size());
+  data.get().convert(rpc);
+
+  auto &&name = std::get<0>(rpc);
+  auto &&args = std::get<1>(rpc);
+
+  if ("terminate" == name)
+  {
+    // Respond with an empty message, then stop the server
+    terminate = true;
+    return std::make_unique<msgpack::object_handle>();
+  }
+
+  // Call the RPC
+  auto rpcIt = m_rpcs.find(name);
+  if (rpcIt == m_rpcs.end())
+  {
+    return errorResponse("'" + name + "' RPC not found!");
+  }
+  return rpcIt->second(args);
 }
 
 void Server::reply(zmq::socket_t &sock,

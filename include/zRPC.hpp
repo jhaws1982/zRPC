@@ -102,6 +102,16 @@ private:
   void worker(void);
 
   /**
+   * @brief Decode a request, run the requested RPC and build its response
+   *
+   * @param[in] msg Request received from the client
+   * @param[out] terminate Set when the client asked the server to terminate
+   * @return std::unique_ptr<msgpack::object_handle> Response to send back
+   */
+  std::unique_ptr<msgpack::object_handle> process(const zmq::message_t &msg,
+                                                  bool &terminate);
+
+  /**
    * @brief Reply to client with identity on provided socket with provided
    * result
    *
