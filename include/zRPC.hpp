@@ -166,6 +166,7 @@ public:
    *
    * @param[in] port Port to listen on
    * @param[in] nWorkers Number of worker threads to create, default = 16
+   * @throws zmq::error_t if the port cannot be bound
    */
   explicit Server(const uint16_t port, const uint32_t nWorkers = 16U);
 
@@ -175,6 +176,7 @@ public:
    *
    * @param[in] uri Zero-MQ address:port to bind listening socket to.
    * @param[in] nWorkers Number of worker threads to create, default = 16
+   * @throws zmq::error_t if the URI is invalid or cannot be bound
    */
   explicit Server(const std::string &uri, const uint32_t nWorkers = 16U);
 
@@ -366,6 +368,7 @@ public:
    * on the specified port for new TCP subscriptions
    *
    * @param[in] port Port to listen on
+   * @throws zmq::error_t if the port cannot be bound
    */
   explicit Publisher(const uint16_t port);
 
@@ -374,6 +377,7 @@ public:
    * URI for new subscriptions
    *
    * @param[in] uri Zero-MQ address/port URI to bind listening socket to.
+   * @throws zmq::error_t if the URI is invalid or cannot be bound
    */
   explicit Publisher(const std::string &uri);
 
