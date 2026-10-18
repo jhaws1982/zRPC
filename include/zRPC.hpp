@@ -510,7 +510,8 @@ public:
    *
    * @tparam T MessagePack-able object type
    * @param[in] uri URI of the publisher to subcribe to
-   * @param[in] topic Name of the topic to subscribe to
+   * @param[in] topic Name of the topic to subscribe to, matched exactly. An
+   * empty topic receives every topic.
    * @param[in] cb Callback to call when message is received
    */
   template <class T>
