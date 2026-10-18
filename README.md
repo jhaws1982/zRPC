@@ -29,6 +29,9 @@ in the RPC server, were borrowed from rpclib (https://github.com/rpclib/rpclib).
 - Any argument or return value associated with a function must be packable by
   MsgPack, otherwise you will be unable to package the argument properly for
   passing between client and server.
+- There is no built-in way to stop a server remotely, and no authentication.
+  If clients should be able to stop the server, bind an RPC for it yourself:
+  `srv.bind("terminate", [&srv]() { srv.stop(); });`
 
 ## TODO
 - Setup make install in CMake

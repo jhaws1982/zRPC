@@ -107,6 +107,7 @@ void server(void)
              sleep(2);
              return a * b;
            });
+  srv.bind("terminate", [&srv]() { srv.stop(); });
   srv.start();
 
   std::cout << " EXITING SERVER THREAD!" << std::endl;

@@ -134,11 +134,14 @@ private:
    * @brief Decode a request, run the requested RPC and build its response
    *
    * @param[in] msg Request received from the client
-   * @param[out] terminate Set when the client asked the server to terminate
    * @return std::unique_ptr<msgpack::object_handle> Response to send back
    */
-  std::unique_ptr<msgpack::object_handle> process(const zmq::message_t &msg,
-                                                  bool &terminate);
+  std::unique_ptr<msgpack::object_handle> process(const zmq::message_t &msg);
+
+  /**
+   * @brief Shut down the 0MQ context, unblocking the broker and all workers
+   */
+  void shutdown(void);
 
   /**
    * @brief Reply to client with identity on provided socket with provided
@@ -156,6 +159,10 @@ public:
   /**
    * @brief Construct a new zRPC::Server object listening on all interfaces on
    * the specified port with the specified number of worker threads
+   *
+   * @warning There is no authentication: anyone who can reach the port can
+   * call every bound RPC. To listen on one interface only, use the URI
+   * constructor, e.g. "tcp://127.0.0.1:12345".
    *
    * @param[in] port Port to listen on
    * @param[in] nWorkers Number of worker threads to create, default = 16
@@ -179,7 +186,15 @@ public:
   void start(void);
 
   /**
-   * @brief Stop the RPC server
+   * @brief Stop the RPC server, making start() return
+   *
+   * May be called from any thread, including from a function bound with
+   * bind(). In that case the server stops once that RPC's reply has been
+   * sent, which lets a client shut the server down remotely if you choose to
+   * offer that, for example:
+   * @code
+   * srv.bind("terminate", [&srv]() { srv.stop(); });
+   * @endcode
    */
   void stop(void);
 
