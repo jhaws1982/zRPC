@@ -29,6 +29,7 @@
 #define _ZRPC_HPP_
 
 #include <CRC.h>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <thread>
@@ -118,7 +119,7 @@ private:
   /**
    * @brief Flag indicating that the server is currently running
    */
-  bool m_running{false};
+  std::atomic<bool> m_running{false};
 
   /**
    * @brief CRC table for use in efficient CRC calculations
@@ -418,7 +419,7 @@ private:
   /**
    * @brief Flag indicating whether the zRPC::Subscriber object is running
    */
-  bool m_running{false};
+  std::atomic<bool> m_running{false};
 
   /**
    * @brief CRC table for use in efficient CRC calculations
