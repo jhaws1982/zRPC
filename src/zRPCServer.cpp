@@ -72,18 +72,12 @@ Server::Server(const std::string &uri,
     m_brokerBackend(m_ctx, zmq::socket_type::dealer),
     m_crcTable(CRC::CRC_32())
 {
-  try
-  {
-    // Start the broker sockets and bind to their ports. Peers sending larger
-    // messages are disconnected by 0MQ before the data reaches a worker.
-    m_brokerFrontend.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
-    m_brokerFrontend.bind(uri);
-    m_brokerBackend.bind("inproc://backend");
-  }
-  catch (const zmq::error_t &e)
-  {
-    std::cerr << " !! ZMQ Error " << e.num() << ": " << e.what() << std::endl;
-  }
+  // Start the broker sockets and bind to their ports. Peers sending larger
+  // messages are disconnected by 0MQ before the data reaches a worker. A bind
+  // failure (e.g. address in use) throws, before any worker thread exists.
+  m_brokerFrontend.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
+  m_brokerFrontend.bind(uri);
+  m_brokerBackend.bind("inproc://backend");
 
   m_running = true;
   for (uint32_t n = 0; n < nWorkers; ++n)
