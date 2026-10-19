@@ -25,35 +25,23 @@
  * SOFTWARE.
  */
 
-#include <iostream>
-
 namespace zRPC
 {
 
 template <class T>
 void Publisher::publish(const std::string &topic, const T &data)
 {
-  try
-  {
-    if (m_pub)
-    {
-      // Seal the topic along with the data so the CRC covers it too
-      const auto pub = detail::seal(detail::Status::Ok,
-                                    std::forward_as_tuple(topic, data));
+  // Seal the topic along with the data so the CRC covers it too
+  const auto pub =
+      detail::seal(detail::Status::Ok, std::forward_as_tuple(topic, data));
 
-      // Send the envelope after the topic. The topic travels in a frame of its
-      // own so that subscribers can match it exactly, whatever characters it
-      // contains.
-      std::lock_guard<std::mutex> lock(m_mutex);
-      (void)m_pub.send(zmq::buffer(topic), zmq::send_flags::sndmore);
-      (void)m_pub.send(zmq::const_buffer(pub.data(), pub.size()),
-                       zmq::send_flags::none);
-    }
-  }
-  catch (const zmq::error_t &e)
-  {
-    std::cerr << " !! ZMQ Error " << e.num() << ": " << e.what() << std::endl;
-  }
+  // Send the envelope after the topic. The topic travels in a frame of its
+  // own so that subscribers can match it exactly, whatever characters it
+  // contains.
+  std::lock_guard<std::mutex> lock(m_mutex);
+  (void)m_pub.send(zmq::buffer(topic), zmq::send_flags::sndmore);
+  (void)m_pub.send(zmq::const_buffer(pub.data(), pub.size()),
+                   zmq::send_flags::none);
 }
 
 }  // namespace zRPC

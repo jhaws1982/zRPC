@@ -30,6 +30,7 @@
 #include <iostream>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include "helpers.hpp"
 
 using namespace zrpc_test;
@@ -94,6 +95,102 @@ bool publishUntil(zRPC::Publisher &pub,
       {
         pub.publish(topic, data);
         return received.count() >= wanted;
+      });
+}
+/**
+ * @brief A bare 0MQ publisher that can send anything at all
+ */
+class RawPublisher
+{
+public:
+  RawPublisher() : m_ctx(1), m_sock(m_ctx, zmq::socket_type::pub)
+  {
+    m_sock.bind("tcp://127.0.0.1:*");
+    m_endpoint = m_sock.get(zmq::sockopt::last_endpoint);
+  }
+
+  const std::string &endpoint() const
+  {
+    return m_endpoint;
+  }
+
+  void send(const std::string &topic, const std::string &data)
+  {
+    (void)m_sock.send(zmq::buffer(topic), zmq::send_flags::sndmore);
+    (void)m_sock.send(zmq::buffer(data), zmq::send_flags::none);
+  }
+
+  /**
+   * @brief A correctly sealed publication of an int
+   */
+  static std::string sealed(const std::string &topic, int v)
+  {
+    return bytes(zRPC::detail::seal(zRPC::detail::Status::Ok,
+                                    std::make_tuple(topic, v)));
+  }
+
+private:
+  zmq::context_t m_ctx;
+  zmq::socket_t m_sock;
+  std::string m_endpoint;
+};
+
+/**
+ * @brief Installs a log handler that records messages, and restores the
+ * previous handler on destruction. Declare it before any Subscriber so the
+ * subscription threads are gone before it is.
+ */
+class CapturedLog
+{
+public:
+  CapturedLog() :
+      m_previous(zRPC::setLogHandler(
+          [this](zRPC::LogLevel level, const std::string &message)
+          {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_entries.emplace_back(level, message);
+          }))
+  {
+  }
+
+  ~CapturedLog()
+  {
+    zRPC::setLogHandler(std::move(m_previous));
+  }
+
+  bool contains(zRPC::LogLevel level, const std::string &text)
+  {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const auto &[l, message] : m_entries)
+    {
+      if (l == level && message.find(text) != std::string::npos)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+private:
+  std::mutex m_mutex;
+  std::vector<std::pair<zRPC::LogLevel, std::string>> m_entries;
+  zRPC::LogHandler m_previous;
+};
+
+/**
+ * @brief Subscribe to "t" on a raw publisher, send a malformed message and
+ * then a marker until the marker arrives
+ *
+ * @return bool Whether the marker arrived
+ */
+bool sendMalformedThenMarker(RawPublisher &raw, std::atomic<int> &markers)
+{
+  return eventually(
+      [&]()
+      {
+        raw.send("t", "\xc1 not msgpack");
+        raw.send("t", RawPublisher::sealed("t", 7));
+        return markers > 0;
       });
 }
 }  // namespace
@@ -264,4 +361,71 @@ TEST(PubSub, PortConstructorAndBindFailure)
   EXPECT_NE(pub.endpoint().find("tcp://0.0.0.0:"), std::string::npos);
   EXPECT_THROW(zRPC::Publisher{connectable(pub.endpoint())}, zmq::error_t);
   EXPECT_THROW(zRPC::Publisher{"not-a-uri"}, zmq::error_t);
+}
+
+TEST(Logging, SubscriptionProblemsGoToTheLogHandler)
+{
+  CapturedLog log;
+  RawPublisher raw;
+  std::atomic<int> good{0};
+  zRPC::Subscriber sub;
+  sub.subscribe<int>(raw.endpoint(), "t",
+                     [&](const std::string &, int &v)
+                     {
+                       if (v == 1)
+                       {
+                         throw std::runtime_error("callback failed");
+                       }
+                       ++good;
+                     });
+
+  EXPECT_TRUE(eventually(
+      [&]()
+      {
+        raw.send("t", "\xc1 not msgpack");
+        raw.send("t", RawPublisher::sealed("t", 1));
+        raw.send("t", RawPublisher::sealed("t", 2));
+        return good > 0 &&
+               log.contains(zRPC::LogLevel::Warning,
+                            "dropped a malformed message") &&
+               log.contains(zRPC::LogLevel::Error, "threw: callback failed");
+      }));
+}
+
+TEST(Logging, DefaultHandlerWritesToStderr)
+{
+  std::ostringstream captured;
+  auto *stderrBuf = std::cerr.rdbuf(captured.rdbuf());
+  {
+    RawPublisher raw;
+    std::atomic<int> markers{0};
+    zRPC::Subscriber sub;
+    sub.subscribe<int>(raw.endpoint(), "t",
+                       [&](const std::string &, int &) { ++markers; });
+    EXPECT_TRUE(sendMalformedThenMarker(raw, markers));
+  }
+  std::cerr.rdbuf(stderrBuf);
+
+  EXPECT_NE(captured.str().find("zRPC warning: Subscription to 't'"),
+            std::string::npos)
+      << captured.str();
+}
+
+TEST(Logging, EmptyHandlerDiscardsMessages)
+{
+  auto previous = zRPC::setLogHandler({});
+  std::ostringstream captured;
+  auto *stderrBuf = std::cerr.rdbuf(captured.rdbuf());
+  {
+    RawPublisher raw;
+    std::atomic<int> markers{0};
+    zRPC::Subscriber sub;
+    sub.subscribe<int>(raw.endpoint(), "t",
+                       [&](const std::string &, int &) { ++markers; });
+    EXPECT_TRUE(sendMalformedThenMarker(raw, markers));
+  }
+  std::cerr.rdbuf(stderrBuf);
+  zRPC::setLogHandler(std::move(previous));
+
+  EXPECT_EQ(captured.str(), "");
 }

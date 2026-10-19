@@ -180,6 +180,55 @@ public:
 };
 
 /**
+ * @brief Severity of a message zRPC logs
+ */
+enum class LogLevel : std::uint8_t
+{
+  /**
+   * @brief A problem zRPC recovered from, e.g. a malformed publication that
+   * was dropped
+   */
+  Warning,
+
+  /**
+   * @brief A failure, e.g. a subscription callback that threw, or a server or
+   * subscription thread that stopped unexpectedly
+   */
+  Error,
+};
+
+/**
+ * @brief Receives the messages zRPC logs
+ */
+using LogHandler =
+    std::function<void(LogLevel level, const std::string &message)>;
+
+/**
+ * @brief Route zRPC's log messages to a handler
+ *
+ * zRPC only logs problems that happen on its own threads (the server's broker
+ * and workers, and subscriptions), where there is no caller to throw to.
+ * Everything else is reported by exceptions. By default messages go to
+ * std::cerr; an empty handler discards them. The handler may be called from
+ * several threads at once.
+ *
+ * @param[in] handler New handler
+ * @return LogHandler The previous handler, e.g. to restore later
+ */
+LogHandler setLogHandler(LogHandler handler);
+
+namespace detail
+{
+/**
+ * @brief Pass a message to the current log handler
+ *
+ * @param[in] level Severity of the message
+ * @param[in] message Text of the message
+ */
+void log(LogLevel level, const std::string &message);
+}  // namespace detail
+
+/**
  * @brief Timeout that never expires
  *
  * A call made with it waits for its reply forever, so it hangs if the server
@@ -597,6 +646,7 @@ public:
    * @tparam T MessagePack-able object type
    * @param[in] topic Name of the topic to publish to
    * @param[in] data Data object to publish
+   * @throws zmq::error_t on a 0MQ failure
    */
   template <class T>
   void publish(const std::string &topic, const T &data);
