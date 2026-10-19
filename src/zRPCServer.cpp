@@ -28,7 +28,6 @@
 #include "zRPC.hpp"
 
 #include <deque>
-#include <iostream>
 
 namespace zRPC
 {
@@ -202,8 +201,9 @@ void Server::start(void)
     // ETERM means stop() shut the context down, which is a normal exit
     if (e.num() != ETERM)
     {
-      std::cerr << " !! ZMQ Broker Error " << e.num() << ": " << e.what()
-                << std::endl;
+      detail::log(LogLevel::Error,
+                  "Server broker for " + m_endpoint + " stopped: 0MQ error " +
+                      std::to_string(e.num()) + ": " + e.what());
     }
   }
 }
@@ -286,8 +286,9 @@ void Server::worker(void)
     // ETERM means stop() shut the context down, which is a normal exit
     if (e.num() != ETERM)
     {
-      std::cerr << " !! ZMQ Worker Error " << e.num() << ": " << e.what()
-                << std::endl;
+      detail::log(LogLevel::Error,
+                  "Server worker for " + m_endpoint + " stopped: 0MQ error " +
+                      std::to_string(e.num()) + ": " + e.what());
     }
   }
 }

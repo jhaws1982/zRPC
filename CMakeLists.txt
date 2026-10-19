@@ -121,6 +121,7 @@ set(zrpc_public_headers include/zRPC.hpp
 add_library(${PROJECT_NAME})
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 target_sources(${PROJECT_NAME} PRIVATE src/zRPCClient.cpp
+                                       src/zRPCLog.cpp
                                        src/zRPCProtocol.cpp
                                        src/zRPCServer.cpp
                                        src/zRPCPublisher.cpp

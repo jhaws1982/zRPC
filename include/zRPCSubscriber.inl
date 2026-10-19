@@ -25,8 +25,6 @@
  * SOFTWARE.
  */
 
-#include <iostream>
-
 namespace zRPC
 {
 
@@ -80,6 +78,10 @@ void Subscriber::handler(const std::string &uri,
         continue;
       }
 
+      // A message that cannot be decoded, or a callback that throws, must
+      // not end the subscription or, by escaping this thread, the process
+      std::string rtopic;
+      T d;
       try
       {
         // Validate the envelope (version, CRC, size limits) and unpack the
@@ -88,7 +90,7 @@ void Subscriber::handler(const std::string &uri,
         std::tuple<std::string, msgpack::object> pubdata;
         pub.body.get().convert(pubdata);
 
-        auto &&rtopic = std::get<0>(pubdata);
+        rtopic = std::move(std::get<0>(pubdata));
         if (rtopic != rtopicMsg.to_string_view())
         {
           throw ProtocolError("topic frame '" +
@@ -97,16 +99,29 @@ void Subscriber::handler(const std::string &uri,
         }
 
         // Unpack the data to published data type
-        T d;
         std::get<1>(pubdata).convert(d);
+      }
+      catch (const std::exception &e)
+      {
+        detail::log(LogLevel::Warning,
+                    "Subscription to '" + topic + "' at " + uri +
+                        " dropped a malformed message: " + e.what());
+        continue;
+      }
+
+      try
+      {
         cb(rtopic, d);
       }
       catch (const std::exception &e)
       {
-        // A message that cannot be decoded, or a callback that throws, must
-        // not end the subscription or, by escaping this thread, the process
-        std::cerr << " !! Subscriber Error on topic '" << topic
-                  << "': " << e.what() << std::endl;
+        detail::log(LogLevel::Error, "Subscription callback for '" + topic +
+                                         "' threw: " + e.what());
+      }
+      catch (...)
+      {
+        detail::log(LogLevel::Error, "Subscription callback for '" + topic +
+                                         "' threw an unknown exception");
       }
     }
   }
@@ -115,8 +130,10 @@ void Subscriber::handler(const std::string &uri,
     // ETERM means the Subscriber is being destroyed, which is a normal exit
     if (e.num() != ETERM)
     {
-      std::cerr << " !! ZMQ Subscriber Error " << e.num() << ": " << e.what()
-                << std::endl;
+      detail::log(LogLevel::Error, "Subscription to '" + topic + "' at " +
+                                       uri + " stopped: 0MQ error " +
+                                       std::to_string(e.num()) + ": " +
+                                       e.what());
     }
   }
 }
