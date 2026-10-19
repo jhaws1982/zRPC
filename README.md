@@ -45,8 +45,12 @@ ctest --test-dir build
 | `ZRPC_INSTALL`            | top level   | Generate install and CPack rules                           |
 | `ZRPC_WARNINGS_AS_ERRORS` | top level   | Add `-Werror` to zRPC's own targets (never to consumers)   |
 | `ZRPC_ENABLE_COVERAGE`    | `OFF`       | Instrument for coverage; adds the `zRPC_coverage` target   |
-| `BUILD_SHARED_LIBS`       | `ON`        | Build a shared (`ON`) or static (`OFF`) library            |
+| `ZRPC_BUILD_SHARED`       | see note    | Build a shared (`ON`) or static (`OFF`) library            |
 | `ZRPC_PACKAGE_ARCH`       | build host  | Package architecture for cross builds, e.g. `arm64`        |
+
+`ZRPC_BUILD_SHARED` follows `BUILD_SHARED_LIBS` if your project sets it;
+otherwise zRPC is shared when built on its own and static when added to
+another project. It only affects zRPC's own library.
 
 ## Testing
 The unit tests use GoogleTest (found on the system, or downloaded). They bind

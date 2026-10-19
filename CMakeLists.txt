@@ -26,7 +26,16 @@ option(ZRPC_FETCH_DEPS
        "Download cppzmq and msgpack-cxx with CPM when they are not installed" ON)
 option(ZRPC_ENABLE_COVERAGE "Instrument zRPC and its tests for coverage" OFF)
 option(ZRPC_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${ZRPC_TOP_LEVEL})
-option(BUILD_SHARED_LIBS "Build zRPC as a shared library" ON)
+# zRPC's own library type. It follows BUILD_SHARED_LIBS when the parent
+# project sets that, and is otherwise shared at the top level and static as a
+# subproject. Unlike option(BUILD_SHARED_LIBS), it never changes the type of
+# anyone else's libraries.
+if(DEFINED BUILD_SHARED_LIBS)
+  set(zrpc_shared_default ${BUILD_SHARED_LIBS})
+else()
+  set(zrpc_shared_default ${ZRPC_TOP_LEVEL})
+endif()
+option(ZRPC_BUILD_SHARED "Build zRPC as a shared library" ${zrpc_shared_default})
 set(ZRPC_SANITIZERS "" CACHE STRING
     "Sanitizers for zRPC, its tests and fetched dependencies, e.g. address,undefined or thread")
 
@@ -118,7 +127,12 @@ set(zrpc_public_headers include/zRPC.hpp
                         include/zRPCSupport.hpp
    )
 
-add_library(${PROJECT_NAME})
+if(ZRPC_BUILD_SHARED)
+  set(zrpc_library_type SHARED)
+else()
+  set(zrpc_library_type STATIC)
+endif()
+add_library(${PROJECT_NAME} ${zrpc_library_type})
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 target_sources(${PROJECT_NAME} PRIVATE src/zRPCClient.cpp
                                        src/zRPCLog.cpp
@@ -136,6 +150,8 @@ target_link_libraries(${PROJECT_NAME} PUBLIC cppzmq msgpack-cxx Threads::Threads
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)
 target_compile_options(${PROJECT_NAME} PRIVATE ${zrpc_warnings})
 set_target_properties(${PROJECT_NAME} PROPERTIES
+  # A static zRPC can still be linked into a consumer's shared library
+  POSITION_INDEPENDENT_CODE ON
   VERSION ${PROJECT_VERSION}
   # Until 1.0 every minor release may break the ABI
   SOVERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
@@ -188,6 +204,19 @@ if(ZRPC_BUILD_TESTS)
   if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.18)
     set(zrpc_discovery_mode DISCOVERY_MODE PRE_TEST)
   endif()
+  # Used as a subproject, zRPC must not change the parent's library types
+  string(REPLACE ";" "$<SEMICOLON>" zrpc_prefix_path "${CMAKE_PREFIX_PATH}")
+  add_test(NAME cmake.SubprojectLeavesParentLibraryTypesAlone
+           COMMAND ${CMAKE_COMMAND}
+                   -S ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/subproject
+                   -B ${CMAKE_CURRENT_BINARY_DIR}/subproject-check
+                   -G ${CMAKE_GENERATOR}
+                   -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+                   -DCMAKE_PREFIX_PATH=${zrpc_prefix_path}
+                   -DZRPC_FETCH_DEPS=${ZRPC_FETCH_DEPS}
+                   -DZRPC_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+          )
+
   include(GoogleTest)
   gtest_discover_tests(zrpc_tests
                        ${zrpc_discovery_mode}
