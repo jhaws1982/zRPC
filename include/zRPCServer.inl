@@ -63,6 +63,13 @@ void Server::insertFunc(const std::string &name,
 {
   m_rpcs[name] = [func, name](msgpack::object const &args)
   {
+    // The arguments arrive as an array; any other type has no array size to
+    // read (via.array would be an inactive union member)
+    if (args.type != msgpack::type::ARRAY)
+    {
+      throw std::runtime_error("Function " + name +
+                               " called with malformed arguments");
+    }
     auto called_args = args.via.array.size;
     auto expected_args = std::tuple_size<support::typeArgs<F>>::value;
 
@@ -99,6 +106,13 @@ void Server::insertFunc(const std::string &name,
 {
   m_rpcs[name] = [func, name](msgpack::object const &args)
   {
+    // The arguments arrive as an array; any other type has no array size to
+    // read (via.array would be an inactive union member)
+    if (args.type != msgpack::type::ARRAY)
+    {
+      throw std::runtime_error("Function " + name +
+                               " called with malformed arguments");
+    }
     auto called_args = args.via.array.size;
     auto expected_args = std::tuple_size<support::typeArgs<F>>::value;
 
