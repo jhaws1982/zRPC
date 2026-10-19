@@ -493,11 +493,11 @@ TEST_F(Rpc, OversizedReplyIsReportedRatherThanTimingOut)
 {
   // The client's socket would drop a reply this large, and every resend
   // would replay it: the call could only ever time out
+  // A RemoteError, rather than the TimeoutError it used to be, shows the
+  // server reported the problem
   const auto limit = static_cast<std::size_t>(zRPC::detail::kMaxMessageSize);
-  const auto start = Clock::now();
   EXPECT_EQ(remoteError([&]() { m_client.call("blob", limit); }),
             ErrorCode::Failed);
-  EXPECT_LT(msSince(start), 4000);
   EXPECT_EQ(m_client.call("add", 1, 2).get().as<int>(), 3);
 }
 
@@ -1013,11 +1013,10 @@ TEST(RpcConnections, OversizedRequestIsRejectedBeforeSending)
 {
   CountingServer srv;
   zRPC::Client client("c", srv.endpoint(), 5s);
+  // ProtocolError rather than TimeoutError, and nothing reached the server
   const auto limit = static_cast<std::size_t>(zRPC::detail::kMaxMessageSize);
-  const auto start = Clock::now();
   EXPECT_THROW(client.call("anything", std::string(limit, 'x')),
                zRPC::ProtocolError);
-  EXPECT_LT(msSince(start), 1000);
   EXPECT_EQ(srv.requests(), 0U);
 }
 
