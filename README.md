@@ -127,9 +127,12 @@ and arm64 packages for every release.
   }
   ```
   The server remembers finished calls for 5 minutes, at most 100,000 of them
-  (`Server::rememberCalls()`). Its memory does not survive a restart, so a
-  call resent to a restarted server, or retried after the window, can run
-  again. Functions that must never repeat should also be safe to repeat.
+  and 256 MiB of their replies (`Server::rememberCalls()`). Past the byte
+  budget the oldest replies are dropped, and a resend of such a call gets a
+  `ReplyUnavailable` error rather than running it again. The memory does not
+  survive a restart, so a call resent to a restarted server, or retried
+  after the window, can run again. Functions that must never repeat should
+  also be safe to repeat.
 - Clients reuse their connections: a client keeps one connection per call it
   has had in flight at once.
 - Every request, reply and publication is a CRC-32 protected envelope

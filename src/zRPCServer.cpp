@@ -85,14 +85,23 @@ public:
     Replay,
 
     /**
+     * @brief Already finished, but its reply was dropped to stay within the
+     * byte budget: say so, without running the call again
+     */
+    Unavailable,
+
+    /**
      * @brief The ID belongs to a different call
      */
     Conflict,
   };
 
-  CallMemory(std::chrono::milliseconds window, std::size_t maxCalls) :
+  CallMemory(std::chrono::milliseconds window,
+             std::size_t maxCalls,
+             std::size_t maxBytes) :
       m_window(window),
-      m_maxCalls(maxCalls)
+      m_maxCalls(maxCalls),
+      m_maxBytes(maxBytes)
   {
   }
 
@@ -118,7 +127,7 @@ public:
     }
     else if (call.finished)
     {
-      return Action::Replay;
+      return call.replyKept ? Action::Replay : Action::Unavailable;
     }
 
     // Reply to each connection once, however often it resends
@@ -135,7 +144,7 @@ public:
   }
 
   /**
-   * @brief Stored reply of a finished call
+   * @brief Stored reply of a finished call whose arrive() returned Replay
    */
   const std::string &reply(const RequestId &id) const
   {
@@ -168,11 +177,16 @@ public:
       return waiting;
     }
 
-    it->second.finished = true;
-    it->second.waiting.clear();
-    it->second.reply.assign(static_cast<const char *>(reply.data()),
-                            reply.size());
-    m_finished.emplace_back(now, id);
+    Call &call = it->second;
+    call.finished = true;
+    call.waiting.clear();
+    call.reply.assign(static_cast<const char *>(reply.data()), reply.size());
+    call.replyKept = true;
+    call.generation = ++m_generation;
+    m_bytes += call.reply.size();
+    m_finished.push_back({now, id, call.generation});
+    m_kept.push_back({now, id, call.generation});
+    dropRepliesOverBudget();
     return waiting;
   }
 
@@ -184,19 +198,25 @@ public:
    */
   void expire(std::chrono::steady_clock::time_point now)
   {
-    while (!m_finished.empty() && (m_finished.front().first + m_window <= now ||
+    while (!m_finished.empty() && (m_finished.front().at + m_window <= now ||
                                    m_finished.size() > m_maxCalls))
     {
-      if (m_finished.front().first + m_window > now && !m_warnedFull)
+      if (m_finished.front().at + m_window > now && !m_warnedCalls)
       {
-        m_warnedFull = true;
+        m_warnedCalls = true;
         detail::log(LogLevel::Warning,
                     "Server finished more than " + std::to_string(m_maxCalls) +
                         " calls within its memory window and is forgetting "
                         "the oldest early; a late resend of one could run it "
                         "again (see Server::rememberCalls())");
       }
-      m_calls.erase(m_finished.front().second);
+
+      const auto it = find(m_finished.front());
+      if (it != m_calls.end())
+      {
+        m_bytes -= it->second.reply.size();
+        m_calls.erase(it);
+      }
       m_finished.pop_front();
     }
   }
@@ -210,6 +230,17 @@ private:
     bool finished{false};
 
     /**
+     * @brief Whether reply still holds the reply
+     */
+    bool replyKept{false};
+
+    /**
+     * @brief Distinguishes this call from an earlier one with the same ID
+     * that has been forgotten
+     */
+    std::uint64_t generation{0};
+
+    /**
      * @brief CRC of the request, which identifies its exact contents
      */
     std::uint32_t crc{0};
@@ -220,21 +251,90 @@ private:
     std::vector<zmq::message_t> waiting;
 
     /**
-     * @brief The reply, once finished
+     * @brief The reply, once finished, while it is kept
      */
     std::string reply;
   };
 
+  /**
+   * @brief A finished call, in the order calls finished
+   */
+  struct Finished
+  {
+    std::chrono::steady_clock::time_point at;
+    RequestId id;
+    std::uint64_t generation;
+  };
+
+  /**
+   * @brief The call an entry refers to, if it is still remembered
+   */
+  std::unordered_map<RequestId, Call, detail::RequestIdHash>::iterator find(
+      const Finished &entry)
+  {
+    auto it = m_calls.find(entry.id);
+    if (it != m_calls.end() && it->second.generation != entry.generation)
+    {
+      return m_calls.end();
+    }
+    return it;
+  }
+
+  /**
+   * @brief Drop the oldest stored replies while they take more than the
+   * byte budget. Their calls stay remembered as finished, so a resend learns
+   * that the reply is gone instead of running the call again.
+   */
+  void dropRepliesOverBudget()
+  {
+    while (m_bytes > m_maxBytes && !m_kept.empty())
+    {
+      const auto it = find(m_kept.front());
+      m_kept.pop_front();
+      if (it == m_calls.end() || !it->second.replyKept)
+      {
+        continue;
+      }
+
+      if (!m_warnedBytes)
+      {
+        m_warnedBytes = true;
+        detail::log(LogLevel::Warning,
+                    "Server's stored replies exceed " +
+                        std::to_string(m_maxBytes) +
+                        " bytes; dropping the oldest. A resend of one of "
+                        "those calls gets a ReplyUnavailable error (see "
+                        "Server::rememberCalls())");
+      }
+      m_bytes -= it->second.reply.size();
+      std::string().swap(it->second.reply);
+      it->second.replyKept = false;
+    }
+  }
+
   std::chrono::milliseconds m_window;
   std::size_t m_maxCalls;
+  std::size_t m_maxBytes;
   std::unordered_map<RequestId, Call, detail::RequestIdHash> m_calls;
 
   /**
-   * @brief Finished calls, oldest first
+   * @brief Finished calls, oldest first, for expiry
    */
-  std::deque<std::pair<std::chrono::steady_clock::time_point, RequestId>>
-      m_finished;
-  bool m_warnedFull{false};
+  std::deque<Finished> m_finished;
+
+  /**
+   * @brief Finished calls whose replies may still be kept, oldest first
+   */
+  std::deque<Finished> m_kept;
+
+  /**
+   * @brief Bytes of replies kept
+   */
+  std::size_t m_bytes{0};
+
+  std::uint64_t m_generation{0};
+  bool m_warnedCalls{false};
+  bool m_warnedBytes{false};
 };
 
 /**
@@ -314,7 +414,8 @@ const std::string &Server::endpoint(void) const noexcept
 }
 
 void Server::rememberCalls(std::chrono::milliseconds window,
-                           std::size_t maxCalls)
+                           std::size_t maxCalls,
+                           std::size_t maxBytes)
 {
   if (m_started)
   {
@@ -323,6 +424,7 @@ void Server::rememberCalls(std::chrono::milliseconds window,
   }
   m_rememberFor = window;
   m_maxRemembered = maxCalls;
+  m_maxRememberedBytes = maxBytes;
 }
 
 void Server::start(void)
@@ -347,7 +449,7 @@ void Server::start(void)
   std::deque<zmq::message_t> idle;
 
   // Calls by request ID, so that a resent call runs at most once
-  CallMemory calls(m_rememberFor, m_maxRemembered);
+  CallMemory calls(m_rememberFor, m_maxRemembered, m_maxRememberedBytes);
 
   try
   {
@@ -443,6 +545,21 @@ void Server::start(void)
             (void)m_brokerFrontend.send(client, zmq::send_flags::sndmore);
             (void)m_brokerFrontend.send(
                 zmq::const_buffer(stored.data(), stored.size()),
+                zmq::send_flags::none);
+            break;
+          }
+
+          case CallMemory::Action::Unavailable:
+          {
+            const auto error = errorReply(
+                ErrorCode::ReplyUnavailable,
+                "Call " + peeked->id.toString() +
+                    " already ran, but its reply was not kept for resends "
+                    "(see Server::rememberCalls())",
+                peeked->id);
+            (void)m_brokerFrontend.send(client, zmq::send_flags::sndmore);
+            (void)m_brokerFrontend.send(
+                zmq::const_buffer(error.data(), error.size()),
                 zmq::send_flags::none);
             break;
           }

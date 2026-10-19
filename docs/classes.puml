@@ -12,7 +12,7 @@ namespace zRPC {
     +endpoint() : const string&
     +bind(name : string, func : F)
     +bind(name : string, method : R (C::*)(A...), object : C*)
-    +rememberCalls(window : milliseconds, maxCalls = 100000)
+    +rememberCalls(window : milliseconds, maxCalls = 100000, maxBytes = 256 MiB)
     +start()
     +stop()
     --
@@ -64,6 +64,7 @@ namespace zRPC {
     InvalidArguments
     Failed
     BadRequest
+    ReplyUnavailable
   }
 
   class Exception

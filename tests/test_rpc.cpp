@@ -725,10 +725,17 @@ class CountingRuns
 public:
   explicit CountingRuns(std::chrono::milliseconds window = 5min,
                         std::size_t maxCalls = 100000,
-                        const std::string &uri = "tcp://127.0.0.1:*") :
+                        const std::string &uri = "tcp://127.0.0.1:*",
+                        std::size_t maxBytes = 256 * 1024 * 1024) :
       m_srv(uri, 2)
   {
-    m_srv.rememberCalls(window, maxCalls);
+    m_srv.rememberCalls(window, maxCalls, maxBytes);
+    m_srv.bind("blob",
+               [this](int n)
+               {
+                 ++m_runs;
+                 return std::string(static_cast<std::size_t>(n), 'x');
+               });
     // Counts a run when it starts, so a duplicate shows up at once
     m_srv.bind("work",
                [this](int ms)
@@ -781,11 +788,12 @@ zRPC::RequestId idNumber(std::uint8_t n)
 /**
  * @brief Value carried by a raw reply envelope
  */
-int valueIn(const zmq::message_t &reply)
+template <typename T = int>
+T valueIn(const zmq::message_t &reply)
 {
   auto opened = zRPC::detail::open(reply.data(), reply.size());
   EXPECT_EQ(opened.status, zRPC::detail::Status::Ok);
-  return opened.body.get().as<int>();
+  return opened.body.get().as<T>();
 }
 }  // namespace
 
@@ -896,6 +904,33 @@ TEST(AtMostOnce, TheOldestCallsAreForgottenBeyondTheLimit)
       rawRequest(srv.endpoint(), {requestWithId(idNumber(1), "work", 0)});
   ASSERT_TRUE(first);
   EXPECT_EQ(valueIn(*first), 4);
+}
+
+TEST(AtMostOnce, RepliesBeyondTheByteBudgetAreDroppedButNotRerun)
+{
+  // Room for one 600-byte reply, not two
+  CountingRuns srv(5min, 100000, "tcp://127.0.0.1:*", 1000);
+  for (std::uint8_t n = 1; n <= 2; ++n)
+  {
+    auto reply =
+        rawRequest(srv.endpoint(), {requestWithId(idNumber(n), "blob", 600)});
+    ASSERT_TRUE(reply);
+    EXPECT_EQ(valueIn<std::string>(*reply).size(), 600U);
+  }
+
+  // The newest reply is kept and replayed
+  auto second =
+      rawRequest(srv.endpoint(), {requestWithId(idNumber(2), "blob", 600)});
+  ASSERT_TRUE(second);
+  EXPECT_EQ(valueIn<std::string>(*second).size(), 600U);
+
+  // The oldest was dropped to stay within budget; its call is still known
+  // to have run, so a resend is told so rather than running it again
+  auto first =
+      rawRequest(srv.endpoint(), {requestWithId(idNumber(1), "blob", 600)});
+  ASSERT_TRUE(first);
+  EXPECT_EQ(errorIn(*first).m_code, ErrorCode::ReplyUnavailable);
+  EXPECT_EQ(srv.runs(), 2);
 }
 
 TEST(AtMostOnce, RememberCallsAfterStartThrows)
