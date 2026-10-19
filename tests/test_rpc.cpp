@@ -142,13 +142,14 @@ class CountingServer
 {
 public:
   explicit CountingServer(int repliesPerRequest = 1,
-                          std::chrono::milliseconds replyDelay = 0ms) :
+                          std::chrono::milliseconds replyDelay = 0ms,
+                          const std::string &uri = "tcp://127.0.0.1:*") :
       m_repliesPerRequest(repliesPerRequest),
       m_replyDelay(replyDelay),
       m_ctx(1),
       m_sock(m_ctx, zmq::socket_type::router)
   {
-    m_sock.bind("tcp://127.0.0.1:*");
+    m_sock.bind(uri);
     m_sock.set(zmq::sockopt::rcvtimeo, 50);
     m_endpoint = m_sock.get(zmq::sockopt::last_endpoint);
     m_thread = std::thread([this]() { serve(); });
@@ -1042,4 +1043,45 @@ TEST(AtMostOnce, HugeWindowRemembersCalls)
     EXPECT_EQ(valueIn(*reply), 1);
   }
   EXPECT_EQ(srv.runs(), 1);
+}
+
+namespace
+{
+/**
+ * @brief An endpoint nothing is listening on
+ */
+std::string unusedEndpoint()
+{
+  zRPC::Server probe("tcp://127.0.0.1:*", 1);
+  return probe.endpoint();
+}
+}  // namespace
+
+TEST(RpcConnections, FrequentResendsToAnAbsentServerStillTimeOutOnTime)
+{
+  // Every resend used to be a blocking send. With nobody to deliver to,
+  // 0MQ queues them, and after ~1000 the send blocked past the deadline.
+  zRPC::Client client("c", unusedEndpoint(), 3s);
+  client.setResendInterval(1ms);
+  const auto start = Clock::now();
+  EXPECT_THROW(client.call("anything"), zRPC::TimeoutError);
+  EXPECT_LT(msSince(start), 4500);
+}
+
+TEST(RpcConnections, AReturningServerGetsOnlyAFewQueuedCopies)
+{
+  const auto endpoint = unusedEndpoint();
+  zRPC::Client client("c", endpoint, 10s);
+  client.setResendInterval(1ms);
+  auto pending =
+      std::async(std::launch::async, [&]() { return client.call("anything"); });
+
+  // About 300 resends while the server is away; only a few are queued
+  std::this_thread::sleep_for(300ms);
+  CountingServer srv(1, 0ms, endpoint);
+  EXPECT_EQ(pending.get().get().as<int>(), 42);
+
+  // Let whatever was queued reach the server before counting
+  std::this_thread::sleep_for(500ms);
+  EXPECT_LT(srv.requests(), 20U);
 }
