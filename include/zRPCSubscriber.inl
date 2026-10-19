@@ -58,7 +58,8 @@ void Subscriber::handler(const std::string &uri,
       // A publication is two frames: [topic][data]
       zmq::message_t rtopicMsg;
       zmq::message_t msg;
-      (void)sock.recv(rtopicMsg, zmq::recv_flags::none);
+      (void)detail::retryInterrupted(
+          [&]() { return sock.recv(rtopicMsg, zmq::recv_flags::none); });
       if (!rtopicMsg.more())
       {
         continue;

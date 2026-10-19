@@ -29,6 +29,7 @@
 #define ZRPC_HPP_
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -258,6 +259,37 @@ namespace detail
  * @param[in] message Text of the message
  */
 void log(LogLevel level, const std::string &message);
+
+/**
+ * @brief Run a blocking 0MQ operation, retrying it if a signal interrupts it
+ *
+ * An application's signal handler (installed without SA_RESTART) makes a
+ * blocking call on whichever thread receives the signal fail with EINTR.
+ * That is not a failure of the socket, so zRPC's threads carry on instead
+ * of ending.
+ *
+ * @param[in] op The operation
+ * @return What the operation returns
+ * @throws zmq::error_t for any error other than EINTR
+ */
+template <typename Op>
+auto retryInterrupted(Op &&op) -> decltype(op())
+{
+  while (true)
+  {
+    try
+    {
+      return op();
+    }
+    catch (const zmq::error_t &e)
+    {
+      if (e.num() != EINTR)
+      {
+        throw;
+      }
+    }
+  }
+}
 }  // namespace detail
 
 /**
