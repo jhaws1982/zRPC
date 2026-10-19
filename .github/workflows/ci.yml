@@ -27,12 +27,12 @@ jobs:
             os: ubuntu-24.04
             cxx: clang++
             fetch: OFF
-            packages: libzmq3-dev cppzmq-dev libmsgpack-cxx-dev
+            packages: libzmq3-dev cppzmq-dev libmsgpack-cxx-dev libgtest-dev
           - name: gcc, system deps (arm64)
             os: ubuntu-24.04-arm
             cxx: g++
             fetch: OFF
-            packages: libzmq3-dev cppzmq-dev libmsgpack-cxx-dev
+            packages: libzmq3-dev cppzmq-dev libmsgpack-cxx-dev libgtest-dev
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
@@ -48,6 +48,42 @@ jobs:
       - name: Build
         run: cmake --build build
       - name: Test
+        run: ctest --test-dir build --output-on-failure --parallel 2
+
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ASan + UBSan
+            sanitizers: address,undefined
+          - name: TSan
+            sanitizers: thread
+    env:
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1 suppressions=${{ github.workspace }}/tests/tsan.supp
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libzmq3-dev
+      # Ubuntu 24.04 kernels randomise more address bits than TSan supports
+      - name: Reduce ASLR entropy for TSan
+        if: matrix.sanitizers == 'thread'
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      # Download every dependency so GoogleTest is built with the sanitizer too
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DZRPC_SANITIZERS=${{ matrix.sanitizers }}
+          -DCPM_USE_LOCAL_PACKAGES=OFF
+      - name: Build
+        run: cmake --build build
+      - name: Test
         run: ctest --test-dir build --output-on-failure
 
   coverage:
@@ -57,7 +93,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build gcovr libzmq3-dev cppzmq-dev libmsgpack-cxx-dev
+          sudo apt-get install -y ninja-build gcovr libzmq3-dev cppzmq-dev libmsgpack-cxx-dev libgtest-dev
       - name: Configure
         run: >
           cmake -S . -B build -G Ninja

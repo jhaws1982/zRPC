@@ -40,4 +40,10 @@ Publisher::Publisher(const std::string &uri) :
 {
   // Start the publisher socket and bind to its port; failure throws
   m_pub.bind(uri);
+  m_endpoint = m_pub.get(zmq::sockopt::last_endpoint);
+}
+
+const std::string &Publisher::endpoint(void) const noexcept
+{
+  return m_endpoint;
 }

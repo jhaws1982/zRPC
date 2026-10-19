@@ -89,6 +89,7 @@ Server::Server(const std::string &uri, const uint32_t nWorkers) :
   m_brokerFrontend.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
   m_brokerFrontend.bind(uri);
   m_brokerBackend.bind("inproc://backend");
+  m_endpoint = m_brokerFrontend.get(zmq::sockopt::last_endpoint);
 
   m_running = true;
 }
@@ -106,6 +107,11 @@ Server::~Server()
       t.join();
     }
   }
+}
+
+const std::string &Server::endpoint(void) const noexcept
+{
+  return m_endpoint;
 }
 
 void Server::start(void)
