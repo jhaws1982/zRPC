@@ -171,7 +171,7 @@ public:
     }
 
     auto waiting = std::move(it->second.waiting);
-    if (m_window <= std::chrono::milliseconds::zero())
+    if (m_window == std::chrono::milliseconds::zero())
     {
       m_calls.erase(it);
       return waiting;
@@ -198,10 +198,12 @@ public:
    */
   void expire(std::chrono::steady_clock::time_point now)
   {
-    while (!m_finished.empty() && (m_finished.front().at + m_window <= now ||
-                                   m_finished.size() > m_maxCalls))
+    while (!m_finished.empty() &&
+           (detail::addSaturated(m_finished.front().at, m_window) <= now ||
+            m_finished.size() > m_maxCalls))
     {
-      if (m_finished.front().at + m_window > now && !m_warnedCalls)
+      if (detail::addSaturated(m_finished.front().at, m_window) > now &&
+          !m_warnedCalls)
       {
         m_warnedCalls = true;
         detail::log(LogLevel::Warning,

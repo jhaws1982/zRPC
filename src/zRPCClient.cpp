@@ -94,17 +94,17 @@ msgpack::object_handle Client::exchange(const RequestId &id,
                         detail::tooLarge("Request to '" + name + "'", request));
   }
 
-  const auto start = Clock::now();
-  const bool forever = timeout < milliseconds::zero();
+  // Negative timeouts, and any too long to represent, never expire
+  const auto deadline = detail::addSaturated(Clock::now(), timeout);
   const milliseconds resend{m_resendMs.load()};
 
   // A 0MQ error destroys the socket with this scope instead of returning it
   auto sock = acquire();
-  auto nextSend = start;
+  auto nextSend = Clock::now();
   while (true)
   {
     const auto now = Clock::now();
-    if (!forever && now - start >= timeout)
+    if (now >= deadline)
     {
       // The reply may still arrive on this socket, so it is not reused
       throw TimeoutError("zRPC client '" + m_identity + "': no reply to '" +
@@ -119,22 +119,21 @@ msgpack::object_handle Client::exchange(const RequestId &id,
       // server, it runs the call at most once
       (void)sock.send(zmq::const_buffer(request.data(), request.size()),
                       zmq::send_flags::none);
-      nextSend = resend > milliseconds::zero() ? now + resend :
-                                                 Clock::time_point::max();
+      nextSend = resend > milliseconds::zero() ?
+                     detail::addSaturated(now, resend) :
+                     Clock::time_point::max();
     }
 
-    // Wait for the reply until the next resend or the deadline
-    auto until = nextSend;
-    if (!forever)
+    // Wait for the reply until the next resend or the deadline. A wait too
+    // long for 0MQ's int milliseconds is cut short, and the loop waits again.
+    const auto until = std::min(nextSend, deadline);
+    int wait = -1;
+    if (until != Clock::time_point::max())
     {
-      until = std::min(until, start + timeout);
+      wait = static_cast<int>(std::clamp<long long>(
+          std::chrono::ceil<milliseconds>(until - now).count(), 0, INT_MAX));
     }
-    sock.set(zmq::sockopt::rcvtimeo,
-             until == Clock::time_point::max() ?
-                 -1 :
-                 detail::zmqTimeout(
-                     std::max(std::chrono::ceil<milliseconds>(until - now),
-                              milliseconds::zero())));
+    sock.set(zmq::sockopt::rcvtimeo, wait);
 
     zmq::message_t msg;
     if (!sock.recv(msg))

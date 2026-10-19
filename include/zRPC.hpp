@@ -448,7 +448,9 @@ public:
    * gets ErrorCode::ReplyUnavailable instead of running the call again.
    *
    * @param[in] window How long to remember a finished call, default 5
-   * minutes. Zero forgets a call as soon as it has replied.
+   * minutes. Zero forgets a call as soon as it has replied; a negative
+   * window, or std::chrono::milliseconds::max(), remembers calls until
+   * maxCalls or maxBytes pushes them out.
    * @param[in] maxCalls Most finished calls remembered at once, default
    * 100,000
    * @param[in] maxBytes Most bytes of replies kept for resends, default 256
@@ -743,7 +745,8 @@ public:
    * A resend carries the same request ID, so the server still runs the call
    * at most once (see Server::rememberCalls()). Resends recover a request
    * lost with a broken connection, e.g. when the server restarts. Default 1
-   * second; zRPC::kWaitForever disables them.
+   * second; zero, zRPC::kWaitForever or any other negative interval disables
+   * them.
    *
    * @param[in] interval Time between sends of an unanswered request
    */
