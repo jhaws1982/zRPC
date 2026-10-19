@@ -101,6 +101,13 @@ inline constexpr std::uint8_t kWireVersion = 1;
 inline constexpr std::int64_t kMaxMessageSize = 64 * 1024 * 1024;
 
 /**
+ * @brief How long closing a socket waits to deliver messages still queued on
+ * it. 0MQ's default is forever, so one stalled or vanished peer could hang a
+ * Server or Publisher destructor, and with it process shutdown.
+ */
+inline constexpr std::chrono::milliseconds kLinger{1000};
+
+/**
  * @brief Whether a sealed message is small enough for peers to accept
  *
  * Every zRPC socket drops a peer that sends more than kMaxMessageSize, so a

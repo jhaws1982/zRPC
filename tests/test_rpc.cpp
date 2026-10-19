@@ -523,6 +523,33 @@ TEST(RpcServer, PortConstructorListensOnAllInterfaces)
   EXPECT_EQ(client.call("add", 1, 2).get().as<int>(), 3);
 }
 
+TEST(RpcServer, DestroyingAServerDoesNotWaitForAStalledClient)
+{
+  auto srv = std::make_unique<zRPC::Server>("tcp://127.0.0.1:*", 2);
+  srv->bind("blob", [](int n)
+            { return std::string(static_cast<std::size_t>(n), 'x'); });
+  auto run = std::make_unique<RunningServer>(*srv);
+
+  // A client that sends requests but never reads the replies, so they back
+  // up in the server's queue
+  zmq::context_t ctx(1);
+  zmq::socket_t stalled(ctx, zmq::socket_type::dealer);
+  stalled.set(zmq::sockopt::linger, 0);
+  stalled.set(zmq::sockopt::rcvhwm, 1);
+  stalled.connect(srv->endpoint());
+  const auto big = request("blob", 1 << 20);
+  for (int i = 0; i < 64; ++i)
+  {
+    (void)stalled.send(zmq::buffer(big), zmq::send_flags::none);
+  }
+  std::this_thread::sleep_for(1s);
+
+  const auto start = Clock::now();
+  run.reset();
+  srv.reset();
+  EXPECT_LT(msSince(start), 5000);
+}
+
 TEST(RpcServer, BindFailureThrows)
 {
   zRPC::Server first("tcp://127.0.0.1:*", 1);

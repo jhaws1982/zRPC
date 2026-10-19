@@ -444,6 +444,12 @@ Server::Server(const std::string &uri, const uint32_t nWorkers) :
   // messages are disconnected by 0MQ before the data reaches a worker. A bind
   // failure (e.g. address in use) throws, before any worker thread exists.
   m_brokerFrontend.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
+  // Final replies get a grace period to reach their clients when the server
+  // is destroyed, but a stalled client cannot hang the destructor
+  m_brokerFrontend.set(zmq::sockopt::linger,
+                       detail::zmqTimeout(detail::kLinger));
+  m_brokerBackend.set(zmq::sockopt::linger,
+                      detail::zmqTimeout(detail::kLinger));
   m_brokerFrontend.bind(uri);
   m_brokerBackend.bind("inproc://backend");
   // Sending to a worker that has stopped fails instead of silently
@@ -701,6 +707,7 @@ void Server::worker(void)
   try
   {
     zmq::socket_t sock(m_ctx, zmq::socket_type::dealer);
+    sock.set(zmq::sockopt::linger, detail::zmqTimeout(detail::kLinger));
     sock.connect("inproc://backend");
 
     // Tell the broker this worker is ready for its first request
