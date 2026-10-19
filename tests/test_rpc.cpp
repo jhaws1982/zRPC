@@ -675,3 +675,246 @@ TEST_F(Rpc, CallsAfterATimeoutGetTheirOwnReplies)
   std::this_thread::sleep_for(400ms);
   EXPECT_EQ(m_client.call("add", 20, 22).get().as<int>(), 42);
 }
+
+// ---------------------------------------------------------------------------
+// At-most-once calls
+// ---------------------------------------------------------------------------
+
+namespace
+{
+/**
+ * @brief A server whose "work" RPC counts how often it really runs
+ */
+class CountingRuns
+{
+public:
+  explicit CountingRuns(std::chrono::milliseconds window = 5min,
+                        std::size_t maxCalls = 100000,
+                        const std::string &uri = "tcp://127.0.0.1:*") :
+      m_srv(uri, 2)
+  {
+    m_srv.rememberCalls(window, maxCalls);
+    // Counts a run when it starts, so a duplicate shows up at once
+    m_srv.bind("work",
+               [this](int ms)
+               {
+                 const int run = ++m_runs;
+                 std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+                 return run;
+               });
+    m_srv.bind("add", &add);
+    m_running = std::make_unique<RunningServer>(m_srv);
+  }
+
+  int runs() const
+  {
+    return m_runs;
+  }
+
+  const std::string &endpoint() const
+  {
+    return m_srv.endpoint();
+  }
+
+private:
+  std::atomic<int> m_runs{0};
+  zRPC::Server m_srv;
+  std::unique_ptr<RunningServer> m_running;
+};
+
+/**
+ * @brief A sealed request carrying a chosen request ID
+ */
+template <typename... A>
+std::string requestWithId(const zRPC::RequestId &id,
+                          const std::string &name,
+                          const A &...args)
+{
+  return bytes(zRPC::detail::seal(
+      zRPC::detail::Status::Ok,
+      std::forward_as_tuple(name, std::forward_as_tuple(args...)), id));
+}
+
+zRPC::RequestId idNumber(std::uint8_t n)
+{
+  zRPC::RequestId id;
+  id.bytes.fill(0x5A);
+  id.bytes.back() = n;
+  return id;
+}
+
+/**
+ * @brief Value carried by a raw reply envelope
+ */
+int valueIn(const zmq::message_t &reply)
+{
+  auto opened = zRPC::detail::open(reply.data(), reply.size());
+  EXPECT_EQ(opened.status, zRPC::detail::Status::Ok);
+  return opened.body.get().as<int>();
+}
+}  // namespace
+
+TEST(AtMostOnce, ResendsDoNotRunACallTwice)
+{
+  CountingRuns srv;
+  zRPC::Client client("c", srv.endpoint(), 5s);
+  client.setResendInterval(50ms);
+
+  // About eight resends arrive while "work" runs, with a worker free to run
+  // each one if the server let it
+  EXPECT_EQ(client.call("work", 400).get().as<int>(), 1);
+  std::this_thread::sleep_for(200ms);
+  EXPECT_EQ(srv.runs(), 1);
+}
+
+TEST(AtMostOnce, RetryAfterATimeoutGetsTheOriginalResult)
+{
+  CountingRuns srv;
+  zRPC::Client client("c", srv.endpoint(), 5s);
+
+  try
+  {
+    client.call(100ms, "work", 400);
+    FAIL() << "expected TimeoutError";
+  }
+  catch (const zRPC::TimeoutError &e)
+  {
+    // Still running: the retry waits for that run
+    EXPECT_EQ(client.call(e.requestId(), 5s, "work", 400).get().as<int>(), 1);
+    // Finished: the retry gets the stored reply
+    EXPECT_EQ(client.call(e.requestId(), 5s, "work", 400).get().as<int>(), 1);
+  }
+  EXPECT_EQ(srv.runs(), 1);
+}
+
+TEST(AtMostOnce, ReusingAnIdForADifferentCallIsRejected)
+{
+  CountingRuns srv;
+  zRPC::Client client("c", srv.endpoint(), 5s);
+
+  try
+  {
+    client.call(50ms, "work", 200);
+    FAIL() << "expected TimeoutError";
+  }
+  catch (const zRPC::TimeoutError &e)
+  {
+    EXPECT_EQ(
+        remoteError([&]() { client.call(e.requestId(), 5s, "work", 300); }),
+        ErrorCode::BadRequest);
+    EXPECT_EQ(
+        remoteError([&]() { client.call(e.requestId(), 5s, "add", 1, 2); }),
+        ErrorCode::BadRequest);
+  }
+  EXPECT_TRUE(eventually([&]() { return srv.runs() == 1; }));
+}
+
+TEST(AtMostOnce, ACorruptedCopyCannotClaimTheId)
+{
+  CountingRuns srv;
+  const auto id = idNumber(1);
+  auto corrupt = requestWithId(id, "work", 0);
+  corrupt[corrupt.size() - 6] =
+      static_cast<char>(corrupt[corrupt.size() - 6] ^ 0x01);
+
+  auto bad = rawRequest(srv.endpoint(), {corrupt});
+  ASSERT_TRUE(bad);
+  EXPECT_EQ(errorIn(*bad).m_code, ErrorCode::BadRequest);
+
+  auto good = rawRequest(srv.endpoint(), {requestWithId(id, "work", 0)});
+  ASSERT_TRUE(good);
+  EXPECT_EQ(valueIn(*good), 1);
+  EXPECT_EQ(srv.runs(), 1);
+}
+
+TEST(AtMostOnce, AZeroWindowForgetsFinishedCalls)
+{
+  CountingRuns srv(0ms);
+  const auto id = idNumber(1);
+  ASSERT_TRUE(rawRequest(srv.endpoint(), {requestWithId(id, "work", 0)}));
+  auto again = rawRequest(srv.endpoint(), {requestWithId(id, "work", 0)});
+  ASSERT_TRUE(again);
+  EXPECT_EQ(valueIn(*again), 2);
+  EXPECT_EQ(srv.runs(), 2);
+}
+
+TEST(AtMostOnce, TheOldestCallsAreForgottenBeyondTheLimit)
+{
+  CountingRuns srv(5min, 2);
+  for (std::uint8_t n = 1; n <= 3; ++n)
+  {
+    auto reply =
+        rawRequest(srv.endpoint(), {requestWithId(idNumber(n), "work", 0)});
+    ASSERT_TRUE(reply);
+    EXPECT_EQ(valueIn(*reply), n);
+  }
+
+  // Still remembered: the stored reply, no new run
+  auto third =
+      rawRequest(srv.endpoint(), {requestWithId(idNumber(3), "work", 0)});
+  ASSERT_TRUE(third);
+  EXPECT_EQ(valueIn(*third), 3);
+  EXPECT_EQ(srv.runs(), 3);
+
+  // Forgotten to stay within two remembered calls: it runs again
+  auto first =
+      rawRequest(srv.endpoint(), {requestWithId(idNumber(1), "work", 0)});
+  ASSERT_TRUE(first);
+  EXPECT_EQ(valueIn(*first), 4);
+}
+
+TEST(AtMostOnce, RememberCallsAfterStartThrows)
+{
+  zRPC::Server srv("tcp://127.0.0.1:*", 1);
+  RunningServer run(srv);
+  EXPECT_TRUE(eventually(
+      [&]()
+      {
+        try
+        {
+          srv.rememberCalls(1min);
+          return false;
+        }
+        catch (const std::logic_error &)
+        {
+          return true;
+        }
+      }));
+}
+
+TEST(AtMostOnce, ResendsRecoverACallLostWithItsServer)
+{
+  // The first server takes the request and stops before replying; only a
+  // resend can get the call to the server that replaces it
+  auto srv = std::make_unique<CountingRuns>();
+  const auto endpoint = srv->endpoint();
+  zRPC::Client client("c", endpoint, 10s);
+  client.setResendInterval(200ms);
+
+  auto pending = std::async(std::launch::async,
+                            [&]() { return client.call("work", 300); });
+  ASSERT_TRUE(eventually([&]() { return srv->runs() == 1; }));
+  srv.reset();
+  srv = std::make_unique<CountingRuns>(5min, 100000, endpoint);
+
+  // The replacement remembers nothing, so it runs the call again
+  EXPECT_EQ(pending.get().get().as<int>(), 1);
+  EXPECT_EQ(srv->runs(), 1);
+}
+
+TEST(AtMostOnce, ClientRecoversWhenTheServerRestartsBetweenCalls)
+{
+  auto srv = std::make_unique<CountingRuns>();
+  const auto endpoint = srv->endpoint();
+  zRPC::Client client("c", endpoint, 10s);
+  client.setResendInterval(200ms);
+  EXPECT_EQ(client.call("add", 1, 2).get().as<int>(), 3);
+
+  // The call starts while the server is down; resends reach the new one
+  srv.reset();
+  auto pending = std::async(std::launch::async,
+                            [&]() { return client.call("add", 20, 22); });
+  std::this_thread::sleep_for(500ms);
+  srv = std::make_unique<CountingRuns>(5min, 100000, endpoint);
+  EXPECT_EQ(pending.get().get().as<int>(), 42);
+}

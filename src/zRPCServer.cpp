@@ -28,6 +28,7 @@
 #include "zRPC.hpp"
 
 #include <deque>
+#include <unordered_map>
 
 namespace zRPC
 {
@@ -54,6 +55,187 @@ constexpr char kReady[] = "READY";
  * that called stop()
  */
 constexpr char kStop[] = "STOP";
+
+/**
+ * @brief The broker's record of calls by request ID, which makes each call
+ * run at most once however often it is resent. Used only by the broker
+ * thread.
+ */
+class CallMemory
+{
+public:
+  /**
+   * @brief What the broker should do with a request
+   */
+  enum class Action
+  {
+    /**
+     * @brief A new call: hand it to a worker
+     */
+    Run,
+
+    /**
+     * @brief Already running: the client gets that run's reply
+     */
+    Wait,
+
+    /**
+     * @brief Already finished: send the stored reply()
+     */
+    Replay,
+
+    /**
+     * @brief The ID belongs to a different call
+     */
+    Conflict,
+  };
+
+  CallMemory(std::chrono::milliseconds window, std::size_t maxCalls) :
+      m_window(window),
+      m_maxCalls(maxCalls)
+  {
+  }
+
+  /**
+   * @brief Note a request arriving from a client connection
+   *
+   * @param[in] request ID and CRC of the request
+   * @param[in] client Routing ID of the connection it arrived on
+   * @return Action What to do with the request
+   */
+  Action arrive(const detail::Peeked &request, zmq::message_t &client)
+  {
+    auto [it, isNew] = m_calls.try_emplace(request.id);
+    Call &call = it->second;
+    if (isNew)
+    {
+      call.crc = request.crc;
+    }
+    else if (call.crc != request.crc)
+    {
+      // The same call always has the same bytes, and so the same CRC
+      return Action::Conflict;
+    }
+    else if (call.finished)
+    {
+      return Action::Replay;
+    }
+
+    // Reply to each connection once, however often it resends
+    for (const auto &waiting : call.waiting)
+    {
+      if (waiting == client)
+      {
+        return Action::Wait;
+      }
+    }
+    call.waiting.emplace_back();
+    call.waiting.back().copy(client);
+    return isNew ? Action::Run : Action::Wait;
+  }
+
+  /**
+   * @brief Stored reply of a finished call
+   */
+  const std::string &reply(const RequestId &id) const
+  {
+    return m_calls.at(id).reply;
+  }
+
+  /**
+   * @brief Note a worker's reply to a call
+   *
+   * @param[in] id Request ID the reply echoes
+   * @param[in] reply The reply
+   * @param[in] now Current time
+   * @return std::vector<zmq::message_t> Every connection waiting for the
+   * reply, or none if the call was not remembered
+   */
+  std::vector<zmq::message_t> finish(const RequestId &id,
+                                     const zmq::message_t &reply,
+                                     std::chrono::steady_clock::time_point now)
+  {
+    auto it = m_calls.find(id);
+    if (it == m_calls.end() || it->second.finished)
+    {
+      return {};
+    }
+
+    auto waiting = std::move(it->second.waiting);
+    if (m_window <= std::chrono::milliseconds::zero())
+    {
+      m_calls.erase(it);
+      return waiting;
+    }
+
+    it->second.finished = true;
+    it->second.waiting.clear();
+    it->second.reply.assign(static_cast<const char *>(reply.data()),
+                            reply.size());
+    m_finished.emplace_back(now, id);
+    return waiting;
+  }
+
+  /**
+   * @brief Forget finished calls older than the window, and the oldest ones
+   * beyond the limit
+   *
+   * @param[in] now Current time
+   */
+  void expire(std::chrono::steady_clock::time_point now)
+  {
+    while (!m_finished.empty() && (m_finished.front().first + m_window <= now ||
+                                   m_finished.size() > m_maxCalls))
+    {
+      if (m_finished.front().first + m_window > now && !m_warnedFull)
+      {
+        m_warnedFull = true;
+        detail::log(LogLevel::Warning,
+                    "Server finished more than " + std::to_string(m_maxCalls) +
+                        " calls within its memory window and is forgetting "
+                        "the oldest early; a late resend of one could run it "
+                        "again (see Server::rememberCalls())");
+      }
+      m_calls.erase(m_finished.front().second);
+      m_finished.pop_front();
+    }
+  }
+
+private:
+  /**
+   * @brief A call the broker has seen
+   */
+  struct Call
+  {
+    bool finished{false};
+
+    /**
+     * @brief CRC of the request, which identifies its exact contents
+     */
+    std::uint32_t crc{0};
+
+    /**
+     * @brief Routing IDs of the connections waiting for the reply
+     */
+    std::vector<zmq::message_t> waiting;
+
+    /**
+     * @brief The reply, once finished
+     */
+    std::string reply;
+  };
+
+  std::chrono::milliseconds m_window;
+  std::size_t m_maxCalls;
+  std::unordered_map<RequestId, Call, detail::RequestIdHash> m_calls;
+
+  /**
+   * @brief Finished calls, oldest first
+   */
+  std::deque<std::pair<std::chrono::steady_clock::time_point, RequestId>>
+      m_finished;
+  bool m_warnedFull{false};
+};
 
 /**
  * @brief Request ID of a raw request, if it has one
@@ -131,6 +313,18 @@ const std::string &Server::endpoint(void) const noexcept
   return m_endpoint;
 }
 
+void Server::rememberCalls(std::chrono::milliseconds window,
+                           std::size_t maxCalls)
+{
+  if (m_started)
+  {
+    throw std::logic_error(
+        "zRPC::Server::rememberCalls() must be called before start().");
+  }
+  m_rememberFor = window;
+  m_maxRemembered = maxCalls;
+}
+
 void Server::start(void)
 {
   if (m_started.exchange(true))
@@ -152,6 +346,9 @@ void Server::start(void)
   // behind busy workers.)
   std::deque<zmq::message_t> idle;
 
+  // Calls by request ID, so that a resent call runs at most once
+  CallMemory calls(m_rememberFor, m_maxRemembered);
+
   try
   {
     while (true)
@@ -163,6 +360,8 @@ void Server::start(void)
 
       // While every worker is busy, leave client requests queued in 0MQ
       zmq::poll(items, idle.empty() ? 1U : 2U, std::chrono::milliseconds{-1});
+      const auto now = std::chrono::steady_clock::now();
+      calls.expire(now);
 
       if (items[0].revents & ZMQ_POLLIN)
       {
@@ -174,11 +373,27 @@ void Server::start(void)
 
         if (frame.more())
         {
-          // Forward the reply to the client; the worker is free again
+          // Send the reply to every connection waiting for this call (the
+          // client plus any resends that arrived meanwhile), or just to the
+          // client if the call had no ID. The worker is free again.
           zmq::message_t reply;
           (void)m_brokerBackend.recv(reply);
-          (void)m_brokerFrontend.send(frame, zmq::send_flags::sndmore);
-          (void)m_brokerFrontend.send(reply, zmq::send_flags::none);
+          std::vector<zmq::message_t> waiting;
+          if (const auto peeked = detail::peek(reply.data(), reply.size()))
+          {
+            waiting = calls.finish(peeked->id, reply, now);
+          }
+          if (waiting.empty())
+          {
+            waiting.push_back(std::move(frame));
+          }
+          for (auto &client : waiting)
+          {
+            (void)m_brokerFrontend.send(client, zmq::send_flags::sndmore);
+            (void)m_brokerFrontend.send(
+                zmq::const_buffer(reply.data(), reply.size()),
+                zmq::send_flags::none);
+          }
           idle.push_back(std::move(worker));
         }
         else if (frame.to_string_view() == kStop)
@@ -207,10 +422,45 @@ void Server::start(void)
           more = extra.more();
         }
 
-        (void)m_brokerBackend.send(idle.front(), zmq::send_flags::sndmore);
-        idle.pop_front();
-        (void)m_brokerBackend.send(client, zmq::send_flags::sndmore);
-        (void)m_brokerBackend.send(request, zmq::send_flags::none);
+        const auto peeked = detail::peek(request.data(), request.size());
+        switch (peeked ? calls.arrive(*peeked, client) :
+                         CallMemory::Action::Run)
+        {
+          case CallMemory::Action::Run:
+            (void)m_brokerBackend.send(idle.front(), zmq::send_flags::sndmore);
+            idle.pop_front();
+            (void)m_brokerBackend.send(client, zmq::send_flags::sndmore);
+            (void)m_brokerBackend.send(request, zmq::send_flags::none);
+            break;
+
+          case CallMemory::Action::Wait:
+            // The running call's reply goes to this connection too
+            break;
+
+          case CallMemory::Action::Replay:
+          {
+            const auto &stored = calls.reply(peeked->id);
+            (void)m_brokerFrontend.send(client, zmq::send_flags::sndmore);
+            (void)m_brokerFrontend.send(
+                zmq::const_buffer(stored.data(), stored.size()),
+                zmq::send_flags::none);
+            break;
+          }
+
+          case CallMemory::Action::Conflict:
+          {
+            const auto error =
+                errorReply(ErrorCode::BadRequest,
+                           "Request ID " + peeked->id.toString() +
+                               " was already used for a different call",
+                           peeked->id);
+            (void)m_brokerFrontend.send(client, zmq::send_flags::sndmore);
+            (void)m_brokerFrontend.send(
+                zmq::const_buffer(error.data(), error.size()),
+                zmq::send_flags::none);
+            break;
+          }
+        }
       }
     }
   }
@@ -322,8 +572,9 @@ msgpack::sbuffer Server::process(const zmq::message_t &msg)
   }
   catch (const ProtocolError &e)
   {
-    // The ID is unverified here, but echoing it lets an intact client match
-    // the error to its call instead of waiting for a reply that never comes
+    // Echo the ID if the request's CRC holds (e.g. a malformed payload), so
+    // the client can match the error to its call. A corrupted request has no
+    // trustworthy ID; its client resends.
     return errorReply(ErrorCode::BadRequest, e.what(), requestId(msg));
   }
   const auto &id = request.id;

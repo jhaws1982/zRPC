@@ -84,30 +84,54 @@ msgpack::object_handle Client::exchange(const RequestId &id,
                                         std::chrono::milliseconds timeout)
 {
   using std::chrono::milliseconds;
-  using std::chrono::steady_clock;
+  using Clock = std::chrono::steady_clock;
+
+  const auto start = Clock::now();
+  const bool forever = timeout < milliseconds::zero();
+  const milliseconds resend{m_resendMs.load()};
 
   // A 0MQ error destroys the socket with this scope instead of returning it
   auto sock = acquire();
-  (void)sock.send(zmq::const_buffer(request.data(), request.size()),
-                  zmq::send_flags::none);
-
-  const bool forever = timeout < milliseconds::zero();
-  const auto deadline =
-      steady_clock::now() + (forever ? milliseconds{} : timeout);
+  auto nextSend = start;
   while (true)
   {
-    const auto left = std::chrono::duration_cast<milliseconds>(
-        deadline - steady_clock::now());
+    const auto now = Clock::now();
+    if (!forever && now - start >= timeout)
+    {
+      // The reply may still arrive on this socket, so it is not reused
+      throw TimeoutError("zRPC client '" + m_identity + "': no reply to '" +
+                             name + "' within " +
+                             std::to_string(timeout.count()) + " ms",
+                         id);
+    }
+
+    if (now >= nextSend)
+    {
+      // Every send carries the same request ID, so however many reach the
+      // server, it runs the call at most once
+      (void)sock.send(zmq::const_buffer(request.data(), request.size()),
+                      zmq::send_flags::none);
+      nextSend = resend > milliseconds::zero() ? now + resend :
+                                                 Clock::time_point::max();
+    }
+
+    // Wait for the reply until the next resend or the deadline
+    auto until = nextSend;
+    if (!forever)
+    {
+      until = std::min(until, start + timeout);
+    }
     sock.set(zmq::sockopt::rcvtimeo,
-             forever ? -1 : detail::zmqTimeout(std::max(left, milliseconds{})));
+             until == Clock::time_point::max() ?
+                 -1 :
+                 detail::zmqTimeout(
+                     std::max(std::chrono::ceil<milliseconds>(until - now),
+                              milliseconds::zero())));
 
     zmq::message_t msg;
     if (!sock.recv(msg))
     {
-      // The reply may still arrive on this socket, so it is not reused
-      throw TimeoutError("zRPC client '" + m_identity + "': no reply to '" +
-                         name + "' within " + std::to_string(timeout.count()) +
-                         " ms");
+      continue;
     }
 
     detail::Opened reply;
@@ -134,6 +158,11 @@ msgpack::object_handle Client::exchange(const RequestId &id,
     }
     return std::move(reply.body);
   }
+}
+
+void Client::setResendInterval(std::chrono::milliseconds interval)
+{
+  m_resendMs = interval.count();
 }
 
 RequestId Client::newRequestId(void)

@@ -51,6 +51,8 @@ constexpr std::size_t kIdSize = sizeof(RequestId::bytes);
 constexpr std::uint8_t kFixArray5 = 0x95;
 constexpr std::uint8_t kUint8 = 0xcc;
 constexpr std::uint8_t kBin8 = 0xc4;
+constexpr std::uint8_t kBin16 = 0xc5;
+constexpr std::uint8_t kBin32 = 0xc6;
 constexpr std::uint8_t kUint32 = 0xce;
 
 /**
@@ -169,8 +171,9 @@ msgpack::sbuffer sealPayload(Status status,
 
 std::optional<Peeked> peek(const void *data, std::size_t size)
 {
+  constexpr std::size_t kPayloadOffset = kIdOffset + kIdSize;
   const auto *bytes = static_cast<const std::uint8_t *>(data);
-  if (size < kIdOffset + kIdSize + kCrcSize || bytes[0] != kFixArray5 ||
+  if (size < kPayloadOffset + 2 + kCrcSize || bytes[0] != kFixArray5 ||
       bytes[1] != kUint8 || bytes[2] != kWireVersion || bytes[3] != kUint8 ||
       bytes[5] != kBin8 || bytes[6] != kIdSize ||
       bytes[size - kCrcSize] != kUint32)
@@ -178,11 +181,52 @@ std::optional<Peeked> peek(const void *data, std::size_t size)
     return std::nullopt;
   }
 
+  // The payload is bin8, bin16 or bin32: a marker, a big-endian length, then
+  // the bytes, which must end exactly where the CRC begins
+  std::size_t lengthSize = 0;
+  switch (bytes[kPayloadOffset])
+  {
+    case kBin8:
+      lengthSize = 1;
+      break;
+    case kBin16:
+      lengthSize = 2;
+      break;
+    case kBin32:
+      lengthSize = 4;
+      break;
+    default:
+      return std::nullopt;
+  }
+  const std::size_t payloadStart = kPayloadOffset + 1 + lengthSize;
+  if (size < payloadStart + kCrcSize)
+  {
+    return std::nullopt;
+  }
+  std::size_t length = 0;
+  for (std::size_t i = 0; i < lengthSize; ++i)
+  {
+    length = (length << 8) | bytes[kPayloadOffset + 1 + i];
+  }
+  if (length != size - kCrcSize - payloadStart)
+  {
+    return std::nullopt;
+  }
+
+  const auto *tail = bytes + size - kCrcSize + 1;
+  const std::uint32_t crc =
+      (std::uint32_t{tail[0]} << 24) | (std::uint32_t{tail[1]} << 16) |
+      (std::uint32_t{tail[2]} << 8) | std::uint32_t{tail[3]};
+  if (envelopeCrc(bytes[4], bytes + kIdOffset, kIdSize,
+                  reinterpret_cast<const char *>(bytes + payloadStart),
+                  length) != crc)
+  {
+    return std::nullopt;
+  }
+
   Peeked peeked;
   std::memcpy(peeked.id.bytes.data(), bytes + kIdOffset, kIdSize);
-  const auto *crc = bytes + size - kCrcSize + 1;
-  peeked.crc = (std::uint32_t{crc[0]} << 24) | (std::uint32_t{crc[1]} << 16) |
-               (std::uint32_t{crc[2]} << 8) | std::uint32_t{crc[3]};
+  peeked.crc = crc;
   return peeked;
 }
 

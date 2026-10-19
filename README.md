@@ -109,11 +109,33 @@ and arm64 packages for every release.
 - Calls give up after the client's timeout (30 s unless the `Client` is built
   with another). Pass a duration to time one call differently, e.g.
   `client.call(500ms, "add", 2, 3)`, or `zRPC::kWaitForever` to wait
-  indefinitely. A call that times out may still run on the server.
+  indefinitely.
+- Each call runs at most once on the server. Every call has a request ID; a
+  client resends a request it has no reply to (every second by default, see
+  `Client::setResendInterval()`), and the server answers a resend of a
+  running call when that run finishes, and of a finished call from memory,
+  without running it again. If a call still times out it may or may not
+  have run; retry it with its ID and it still runs at most once:
+  ```cpp
+  try
+  {
+    client.call(5s, "startJob", job);
+  }
+  catch (const zRPC::TimeoutError &e)
+  {
+    client.call(e.requestId(), 30s, "startJob", job);  // same name and args
+  }
+  ```
+  The server remembers finished calls for 5 minutes, at most 100,000 of them
+  (`Server::rememberCalls()`). Its memory does not survive a restart, so a
+  call resent to a restarted server, or retried after the window, can run
+  again. Functions that must never repeat should also be safe to repeat.
+- Clients reuse their connections: a client keeps one connection per call it
+  has had in flight at once.
 - Every request, reply and publication is a CRC-32 protected envelope
   `[version, status, request id, payload, crc]`; replies echo the request's
-  ID. The CRC detects accidental corruption,
-  not tampering; use 0MQ CURVE security on untrusted networks.
+  ID. The CRC detects accidental corruption, not tampering; use 0MQ CURVE
+  security on untrusted networks.
 - zRPC never writes to stdout. Problems on its own threads (a dropped
   publication, a subscription callback that throws, a server thread that
   stops) go to a log handler, `std::cerr` by default:
