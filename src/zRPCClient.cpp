@@ -136,7 +136,7 @@ msgpack::object_handle Client::exchange(const RequestId &id,
     sock.set(zmq::sockopt::rcvtimeo, wait);
 
     zmq::message_t msg;
-    if (!sock.recv(msg))
+    if (!detail::retryInterrupted([&]() { return sock.recv(msg); }))
     {
       continue;
     }

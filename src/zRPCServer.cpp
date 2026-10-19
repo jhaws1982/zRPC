@@ -144,6 +144,21 @@ public:
   }
 
   /**
+   * @brief Forget a call that was never run, e.g. because no worker could
+   * take it
+   *
+   * @param[in] id Request ID of the call
+   */
+  void abandon(const RequestId &id)
+  {
+    const auto it = m_calls.find(id);
+    if (it != m_calls.end() && !it->second.finished)
+    {
+      m_calls.erase(it);
+    }
+  }
+
+  /**
    * @brief Stored reply of a finished call whose arrive() returned Replay
    */
   const std::string &reply(const RequestId &id) const
@@ -340,6 +355,47 @@ private:
 };
 
 /**
+ * @brief Hand a request to the longest-idle worker that is still running
+ *
+ * The backend is a ROUTER_MANDATORY socket, so sending to a worker that has
+ * stopped fails with EHOSTUNREACH; that worker is dropped and the next idle
+ * one tried.
+ *
+ * @param[in] backend Broker's backend socket
+ * @param[in,out] idle Routing IDs of idle workers, longest idle first
+ * @param[in] client Routing ID of the client connection
+ * @param[in] request The request
+ * @return bool False if no idle worker was still running
+ */
+bool dispatch(zmq::socket_t &backend,
+              std::deque<zmq::message_t> &idle,
+              zmq::message_t &client,
+              zmq::message_t &request)
+{
+  while (!idle.empty())
+  {
+    try
+    {
+      (void)backend.send(idle.front(), zmq::send_flags::sndmore);
+    }
+    catch (const zmq::error_t &e)
+    {
+      if (e.num() != EHOSTUNREACH)
+      {
+        throw;
+      }
+      idle.pop_front();
+      continue;
+    }
+    idle.pop_front();
+    (void)backend.send(client, zmq::send_flags::sndmore);
+    (void)backend.send(request, zmq::send_flags::none);
+    return true;
+  }
+  return false;
+}
+
+/**
  * @brief Request ID of a raw request, if it has one
  *
  * @param[in] msg Request as received
@@ -390,6 +446,9 @@ Server::Server(const std::string &uri, const uint32_t nWorkers) :
   m_brokerFrontend.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
   m_brokerFrontend.bind(uri);
   m_brokerBackend.bind("inproc://backend");
+  // Sending to a worker that has stopped fails instead of silently
+  // discarding the request, so the broker can skip that worker
+  m_brokerBackend.set(zmq::sockopt::router_mandatory, true);
   m_endpoint = m_brokerFrontend.get(zmq::sockopt::last_endpoint);
 
   m_running = true;
@@ -463,7 +522,12 @@ void Server::start(void)
       };
 
       // While every worker is busy, leave client requests queued in 0MQ
-      zmq::poll(items, idle.empty() ? 1U : 2U, std::chrono::milliseconds{-1});
+      detail::retryInterrupted(
+          [&]()
+          {
+            return zmq::poll(items, idle.empty() ? 1U : 2U,
+                             std::chrono::milliseconds{-1});
+          });
       const auto now = std::chrono::steady_clock::now();
       calls.expire(now);
 
@@ -531,10 +595,22 @@ void Server::start(void)
                          CallMemory::Action::Run)
         {
           case CallMemory::Action::Run:
-            (void)m_brokerBackend.send(idle.front(), zmq::send_flags::sndmore);
-            idle.pop_front();
-            (void)m_brokerBackend.send(client, zmq::send_flags::sndmore);
-            (void)m_brokerBackend.send(request, zmq::send_flags::none);
+            if (!dispatch(m_brokerBackend, idle, client, request))
+            {
+              // Every idle worker turned out to have stopped (each logged
+              // why). The call never ran, so it is not remembered.
+              if (peeked)
+              {
+                calls.abandon(peeked->id);
+              }
+              const auto error = errorReply(ErrorCode::Unknown,
+                                            "Server has no running workers",
+                                            requestId(request));
+              (void)m_brokerFrontend.send(client, zmq::send_flags::sndmore);
+              (void)m_brokerFrontend.send(
+                  zmq::const_buffer(error.data(), error.size()),
+                  zmq::send_flags::none);
+            }
             break;
 
           case CallMemory::Action::Wait:
@@ -634,8 +710,8 @@ void Server::worker(void)
     {
       zmq::message_t identity;
       zmq::message_t msg;
-      (void)sock.recv(identity);
-      (void)sock.recv(msg);
+      (void)detail::retryInterrupted([&]() { return sock.recv(identity); });
+      (void)detail::retryInterrupted([&]() { return sock.recv(msg); });
 
       // Every request gets exactly one reply. A malformed request or an
       // exception thrown by a bound function is reported back to the client

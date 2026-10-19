@@ -175,6 +175,7 @@ if(ZRPC_BUILD_TESTS)
                             tests/test_protocol.cpp
                             tests/test_pubsub.cpp
                             tests/test_rpc.cpp
+                            tests/test_signals.cpp
                 )
   target_link_libraries(zrpc_tests PRIVATE ${PROJECT_NAME}::${PROJECT_NAME}
                                            GTest::gtest_main)
