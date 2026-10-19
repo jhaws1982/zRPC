@@ -474,3 +474,22 @@ TEST(Logging, EmptyHandlerDiscardsMessages)
 
   EXPECT_EQ(captured.str(), "");
 }
+
+TEST(Logging, AThrowingHandlerDoesNotStopTheSubscription)
+{
+  auto previous = zRPC::setLogHandler(
+      [](zRPC::LogLevel, const std::string &)
+      { throw std::runtime_error("logging backend is down"); });
+  {
+    RawPublisher raw;
+    std::atomic<int> markers{0};
+    zRPC::Subscriber sub;
+    sub.subscribe<int>(raw.endpoint(), "t",
+                       [&](const std::string &, int &) { ++markers; });
+
+    // Logging the malformed message throws; the marker after it must still
+    // arrive
+    EXPECT_TRUE(sendMalformedThenMarker(raw, markers));
+  }
+  zRPC::setLogHandler(std::move(previous));
+}
