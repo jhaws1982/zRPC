@@ -27,6 +27,64 @@
 
 namespace zRPC
 {
+namespace detail
+{
+/**
+ * @brief A call's arguments do not match the bound function
+ */
+class InvalidArguments : public std::runtime_error
+{
+public:
+  using std::runtime_error::runtime_error;
+};
+
+/**
+ * @brief Convert a call's arguments to the parameter types of F
+ *
+ * @tparam F Callable type that was bound
+ * @param[in] name Name of the RPC, for error messages
+ * @param[in] args Arguments received from the client
+ * @return support::typeArgs<F> Arguments ready to pass to the function
+ * @throws InvalidArguments if the arguments are not an array, or their number
+ * or types do not match the function
+ */
+template <typename F>
+support::typeArgs<F> convertArgs(const std::string &name,
+                                 const msgpack::object &args)
+{
+  // The arguments arrive as an array; any other type has no array size to
+  // read (via.array would be an inactive union member)
+  if (args.type != msgpack::type::ARRAY)
+  {
+    throw InvalidArguments("Function " + name +
+                           " called with malformed arguments");
+  }
+  auto called_args = args.via.array.size;
+  auto expected_args = std::tuple_size<support::typeArgs<F>>::value;
+
+  // Ensure number of arguments matches
+  if (called_args != expected_args)
+  {
+    throw InvalidArguments("Function " + name + " called with " +
+                           std::to_string(called_args) +
+                           " arguments; expected " +
+                           std::to_string(expected_args));
+  }
+
+  support::typeArgs<F> realArgs;
+  try
+  {
+    args.convert(realArgs);
+  }
+  catch (const msgpack::type_error &)
+  {
+    throw InvalidArguments("Function " + name +
+                           " called with arguments of the wrong type");
+  }
+  return realArgs;
+}
+}  // namespace detail
+
 template <typename F>
 void Server::bind(const std::string &name, F func)
 {
@@ -81,27 +139,9 @@ void Server::insertFunc(const std::string &name,
 {
   m_rpcs[name] = [func, name](msgpack::object const &args)
   {
-    // The arguments arrive as an array; any other type has no array size to
-    // read (via.array would be an inactive union member)
-    if (args.type != msgpack::type::ARRAY)
-    {
-      throw std::runtime_error("Function " + name +
-                               " called with malformed arguments");
-    }
-    auto called_args = args.via.array.size;
-    auto expected_args = std::tuple_size<support::typeArgs<F>>::value;
-
-    // Ensure number of arguments matches
-    if (called_args != expected_args)
-    {
-      throw std::runtime_error(
-          "Function " + name + " called with " + std::to_string(called_args) +
-          " arguments; expected " + std::to_string(expected_args));
-    }
+    auto realArgs = detail::convertArgs<F>(name, args);
 
     // Call the function
-    typename support::typeArgs<F> realArgs;
-    args.convert(realArgs);
     auto zone = std::make_unique<msgpack::zone>();
     auto rtnval = support::call(func, realArgs);
     auto rtnobj = msgpack::object(rtnval, *zone);
@@ -124,27 +164,9 @@ void Server::insertFunc(const std::string &name,
 {
   m_rpcs[name] = [func, name](msgpack::object const &args)
   {
-    // The arguments arrive as an array; any other type has no array size to
-    // read (via.array would be an inactive union member)
-    if (args.type != msgpack::type::ARRAY)
-    {
-      throw std::runtime_error("Function " + name +
-                               " called with malformed arguments");
-    }
-    auto called_args = args.via.array.size;
-    auto expected_args = std::tuple_size<support::typeArgs<F>>::value;
-
-    // Ensure number of arguments matches
-    if (called_args != expected_args)
-    {
-      throw std::runtime_error(
-          "Function " + name + " called with " + std::to_string(called_args) +
-          " arguments; expected " + std::to_string(expected_args));
-    }
+    auto realArgs = detail::convertArgs<F>(name, args);
 
     // Call the function
-    typename support::typeArgs<F> realArgs;
-    args.convert(realArgs);
     support::call(func, realArgs);
 
     return std::make_unique<msgpack::object_handle>();

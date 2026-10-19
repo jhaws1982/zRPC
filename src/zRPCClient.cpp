@@ -35,7 +35,6 @@ Client::Client(const std::string &identity,
     m_ctx(1),
     m_identity(identity),
     m_uri(uri),
-    m_timeout(timeout),
-    m_crcTable(CRC::CRC_32())
+    m_timeout(timeout)
 {
 }

@@ -57,18 +57,18 @@ constexpr char kReady[] = "READY";
 constexpr char kStop[] = "STOP";
 
 /**
- * @brief Build a response carrying a zRPC::Error with the given message
+ * @brief Build a reply carrying a zRPC::Error
  *
+ * @param[in] code Category of the error
  * @param[in] msg Error message for the client
- * @return std::unique_ptr<msgpack::object_handle> Response to send back
+ * @return msgpack::sbuffer Reply envelope to send back
  */
-std::unique_ptr<msgpack::object_handle> errorResponse(const std::string &msg)
+msgpack::sbuffer errorReply(ErrorCode code, const std::string &msg)
 {
   Error err;
   err.m_msg = msg;
-  auto zone = std::make_unique<msgpack::zone>();
-  auto rtnobj = msgpack::object(err, *zone);
-  return std::make_unique<msgpack::object_handle>(rtnobj, std::move(zone));
+  err.m_code = code;
+  return detail::seal(detail::Status::Error, err);
 }
 }  // namespace
 
@@ -81,8 +81,7 @@ Server::Server(const std::string &uri, const uint32_t nWorkers) :
     m_ctx(16),
     m_brokerFrontend(m_ctx, zmq::socket_type::router),
     m_brokerBackend(m_ctx, zmq::socket_type::router),
-    m_nWorkers(nWorkers),
-    m_crcTable(CRC::CRC_32())
+    m_nWorkers(nWorkers)
 {
   // Start the broker sockets and bind to their ports. Peers sending larger
   // messages are disconnected by 0MQ before the data reaches a worker. A bind
@@ -248,7 +247,7 @@ void Server::worker(void)
       // Every request gets exactly one reply. A malformed request or an
       // exception thrown by a bound function is reported back to the client
       // rather than escaping this thread and terminating the whole server.
-      std::unique_ptr<msgpack::object_handle> res;
+      msgpack::sbuffer res;
       try
       {
         res = process(msg);
@@ -259,11 +258,11 @@ void Server::worker(void)
       }
       catch (const std::exception &e)
       {
-        res = errorResponse(e.what());
+        res = errorReply(ErrorCode::Unknown, e.what());
       }
       catch (...)
       {
-        res = errorResponse("Unknown exception");
+        res = errorReply(ErrorCode::Unknown, "Unknown exception");
       }
       reply(sock, identity, res);
 
@@ -287,35 +286,30 @@ void Server::worker(void)
   }
 }
 
-std::unique_ptr<msgpack::object_handle> Server::process(
-    const zmq::message_t &msg)
+msgpack::sbuffer Server::process(const zmq::message_t &msg)
 {
-  // Unpack and convert the message and CRC
-  auto crcdata =
-      msgpack::unpack(static_cast<const char *>(msg.data()), msg.size(),
-                      nullptr, nullptr, detail::unpackLimits());
-  std::tuple<std::string, std::uint32_t> crcrpc;
-  crcdata.get().convert(crcrpc);
-
-  auto &&rpcmsg = std::get<0>(crcrpc);
-  auto &&crc = std::get<1>(crcrpc);
-  std::uint32_t check =
-      CRC::Calculate(rpcmsg.data(), rpcmsg.size(), m_crcTable);
-
-  if (check != crc)
+  // Validate the envelope (version, CRC, size limits) and unpack the request
+  detail::Opened request;
+  try
   {
-    std::stringstream ss;
-    ss << std::hex << "Bad checksum: CRC=" << crc << " != " << check
-       << "=Checked";
-    std::cout << ss.str() << std::endl;
-    return errorResponse(ss.str());
+    request = detail::open(msg.data(), msg.size());
+  }
+  catch (const ProtocolError &e)
+  {
+    return errorReply(ErrorCode::BadRequest, e.what());
   }
 
   // Unpack and convert RPC name and arguments
   std::tuple<std::string, msgpack::object> rpc;
-  auto data = msgpack::unpack(rpcmsg.data(), rpcmsg.size(), nullptr, nullptr,
-                              detail::unpackLimits());
-  data.get().convert(rpc);
+  try
+  {
+    request.body.get().convert(rpc);
+  }
+  catch (const msgpack::type_error &)
+  {
+    return errorReply(ErrorCode::BadRequest,
+                      "Malformed request: expected [name, [arguments...]]");
+  }
 
   auto &&name = std::get<0>(rpc);
   auto &&args = std::get<1>(rpc);
@@ -324,23 +318,36 @@ std::unique_ptr<msgpack::object_handle> Server::process(
   auto rpcIt = m_rpcs.find(name);
   if (rpcIt == m_rpcs.end())
   {
-    return errorResponse("'" + name + "' RPC not found!");
+    return errorReply(ErrorCode::NotFound, "'" + name + "' RPC not found!");
   }
-  return rpcIt->second(args);
+
+  try
+  {
+    auto result = rpcIt->second(args);
+    return detail::seal(detail::Status::Ok, result->get());
+  }
+  catch (const detail::InvalidArguments &e)
+  {
+    return errorReply(ErrorCode::InvalidArguments, e.what());
+  }
+  catch (const std::exception &e)
+  {
+    return errorReply(ErrorCode::Failed, e.what());
+  }
+  catch (...)
+  {
+    return errorReply(ErrorCode::Failed, "Unknown exception");
+  }
 }
 
 void Server::reply(zmq::socket_t &sock,
                    zmq::message_t &identity,
-                   std::unique_ptr<msgpack::object_handle> &res) const
+                   const msgpack::sbuffer &res) const
 {
   // Reply with the identity of the message for the broker
   zmq::message_t copied_id;
   copied_id.copy(identity);
   (void)sock.send(copied_id, zmq::send_flags::sndmore);
-
-  // Pack the result into an object
-  auto sbuf = std::make_shared<msgpack::sbuffer>();
-  msgpack::pack(*sbuf, res->get());
-  (void)sock.send(zmq::const_buffer(sbuf->data(), sbuf->size()),
+  (void)sock.send(zmq::const_buffer(res.data(), res.size()),
                   zmq::send_flags::none);
 }

@@ -25,33 +25,28 @@
  * SOFTWARE.
  */
 
+#include <iostream>
+
 namespace zRPC
 {
 
 template <class T>
-void Publisher::publish(const std::string &topic, T &data)
+void Publisher::publish(const std::string &topic, const T &data)
 {
   try
   {
     if (m_pub)
     {
-      // Pack the data into a stringstream and calculate CRC
-      std::stringstream cbuf;
-      msgpack::pack(cbuf, data);
-      std::uint32_t crc =
-          CRC::Calculate(cbuf.str().data(), cbuf.str().size(), m_crcTable);
+      // Seal the topic along with the data so the CRC covers it too
+      const auto pub = detail::seal(detail::Status::Ok,
+                                    std::forward_as_tuple(topic, data));
 
-      // Create a tuple with the topic name, packed data, and CRC
-      auto data_tuple = std::make_tuple(topic, cbuf.str(), crc);
-
-      // Pack the new tuple into an object and send it after the topic. The
-      // topic travels in a frame of its own so that subscribers can match it
-      // exactly, whatever characters it contains.
-      auto sbuf = std::make_shared<msgpack::sbuffer>();
-      msgpack::pack(*sbuf, data_tuple);
+      // Send the envelope after the topic. The topic travels in a frame of its
+      // own so that subscribers can match it exactly, whatever characters it
+      // contains.
       std::lock_guard<std::mutex> lock(m_mutex);
       (void)m_pub.send(zmq::buffer(topic), zmq::send_flags::sndmore);
-      (void)m_pub.send(zmq::const_buffer(sbuf->data(), sbuf->size()),
+      (void)m_pub.send(zmq::const_buffer(pub.data(), pub.size()),
                        zmq::send_flags::none);
     }
   }

@@ -70,8 +70,10 @@ endif(CRCpp_ADDED)
 ###############################################################################
 add_library(${PROJECT_NAME} SHARED)
 target_include_directories(${PROJECT_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(${PROJECT_NAME} PUBLIC cppzmq msgpackc-cxx CRCpp pthread)
+target_link_libraries(${PROJECT_NAME} PUBLIC cppzmq msgpackc-cxx pthread
+                                      PRIVATE CRCpp)
 target_sources(${PROJECT_NAME} PRIVATE  src/zRPCClient.cpp
+                                        src/zRPCProtocol.cpp
                                         src/zRPCServer.cpp
                                         src/zRPCPublisher.cpp
                                         src/zRPCSubscriber.cpp
