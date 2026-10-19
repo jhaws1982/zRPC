@@ -31,6 +31,15 @@
 
 namespace zRPC
 {
+namespace
+{
+/**
+ * @brief Most copies of a request a client socket queues while it cannot
+ * deliver them (no server, or a server not reading). Resends beyond this are
+ * skipped, since a copy is already waiting.
+ */
+constexpr int kQueuedCopies = 4;
+}  // namespace
 
 Client::Client(const std::string &identity,
                const std::string &uri,
@@ -67,6 +76,7 @@ zmq::socket_t Client::acquire(void)
   // An unsent request is not worth delivering once its call has given up,
   // and must not hold up closing the context
   sock.set(zmq::sockopt::linger, 0);
+  sock.set(zmq::sockopt::sndhwm, kQueuedCopies);
   sock.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
   sock.connect(m_uri);
   return sock;
@@ -116,9 +126,11 @@ msgpack::object_handle Client::exchange(const RequestId &id,
     if (now >= nextSend)
     {
       // Every send carries the same request ID, so however many reach the
-      // server, it runs the call at most once
+      // server, it runs the call at most once. Never block: if the socket's
+      // small queue is full, a copy is already waiting and this resend is
+      // skipped, so the deadline always bounds the call.
       (void)sock.send(zmq::const_buffer(request.data(), request.size()),
-                      zmq::send_flags::none);
+                      zmq::send_flags::dontwait);
       nextSend = resend > milliseconds::zero() ?
                      detail::addSaturated(now, resend) :
                      Clock::time_point::max();
