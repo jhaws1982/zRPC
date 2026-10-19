@@ -48,9 +48,10 @@ msgpack::object_handle Client::call(std::chrono::milliseconds timeout,
   l_sock.connect(m_uri);
 
   // Send [name, [args...]] in a CRC-protected envelope
+  const auto id = newRequestId();
   const auto request = detail::seal(
       detail::Status::Ok,
-      std::forward_as_tuple(name, std::forward_as_tuple(args...)));
+      std::forward_as_tuple(name, std::forward_as_tuple(args...)), id);
   (void)l_sock.send(zmq::const_buffer(request.data(), request.size()),
                     zmq::send_flags::none);
 
@@ -64,6 +65,11 @@ msgpack::object_handle Client::call(std::chrono::milliseconds timeout,
   }
 
   auto reply = detail::open(msg.data(), msg.size());
+  if (reply.id != id)
+  {
+    throw ProtocolError("zRPC client '" + m_identity + "': reply to '" + name +
+                        "' belongs to a different call");
+  }
   if (reply.status == detail::Status::Error)
   {
     throw RemoteError(reply.body.get().as<Error>());

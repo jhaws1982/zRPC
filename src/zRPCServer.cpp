@@ -56,18 +56,36 @@ constexpr char kReady[] = "READY";
 constexpr char kStop[] = "STOP";
 
 /**
+ * @brief Request ID of a raw request, if it has one
+ *
+ * @param[in] msg Request as received
+ * @return std::optional<RequestId> The ID, unverified
+ */
+std::optional<RequestId> requestId(const zmq::message_t &msg)
+{
+  if (const auto peeked = detail::peek(msg.data(), msg.size()))
+  {
+    return peeked->id;
+  }
+  return std::nullopt;
+}
+
+/**
  * @brief Build a reply carrying a zRPC::Error
  *
  * @param[in] code Category of the error
  * @param[in] msg Error message for the client
+ * @param[in] id Request ID to echo, if the request had one
  * @return msgpack::sbuffer Reply envelope to send back
  */
-msgpack::sbuffer errorReply(ErrorCode code, const std::string &msg)
+msgpack::sbuffer errorReply(ErrorCode code,
+                            const std::string &msg,
+                            const std::optional<RequestId> &id)
 {
   Error err;
   err.m_msg = msg;
   err.m_code = code;
-  return detail::seal(detail::Status::Error, err);
+  return detail::seal(detail::Status::Error, err, id);
 }
 }  // namespace
 
@@ -264,11 +282,12 @@ void Server::worker(void)
       }
       catch (const std::exception &e)
       {
-        res = errorReply(ErrorCode::Unknown, e.what());
+        res = errorReply(ErrorCode::Unknown, e.what(), requestId(msg));
       }
       catch (...)
       {
-        res = errorReply(ErrorCode::Unknown, "Unknown exception");
+        res =
+            errorReply(ErrorCode::Unknown, "Unknown exception", requestId(msg));
       }
       reply(sock, identity, res);
 
@@ -303,8 +322,11 @@ msgpack::sbuffer Server::process(const zmq::message_t &msg)
   }
   catch (const ProtocolError &e)
   {
-    return errorReply(ErrorCode::BadRequest, e.what());
+    // The ID is unverified here, but echoing it lets an intact client match
+    // the error to its call instead of waiting for a reply that never comes
+    return errorReply(ErrorCode::BadRequest, e.what(), requestId(msg));
   }
+  const auto &id = request.id;
 
   // Unpack and convert RPC name and arguments
   std::tuple<std::string, msgpack::object> rpc;
@@ -315,7 +337,7 @@ msgpack::sbuffer Server::process(const zmq::message_t &msg)
   catch (const msgpack::type_error &)
   {
     return errorReply(ErrorCode::BadRequest,
-                      "Malformed request: expected [name, [arguments...]]");
+                      "Malformed request: expected [name, [arguments...]]", id);
   }
 
   auto &&name = std::get<0>(rpc);
@@ -325,25 +347,25 @@ msgpack::sbuffer Server::process(const zmq::message_t &msg)
   auto rpcIt = m_rpcs.find(name);
   if (rpcIt == m_rpcs.end())
   {
-    return errorReply(ErrorCode::NotFound, "'" + name + "' RPC not found!");
+    return errorReply(ErrorCode::NotFound, "'" + name + "' RPC not found!", id);
   }
 
   try
   {
     auto result = rpcIt->second(args);
-    return detail::seal(detail::Status::Ok, result->get());
+    return detail::seal(detail::Status::Ok, result->get(), id);
   }
   catch (const detail::InvalidArguments &e)
   {
-    return errorReply(ErrorCode::InvalidArguments, e.what());
+    return errorReply(ErrorCode::InvalidArguments, e.what(), id);
   }
   catch (const std::exception &e)
   {
-    return errorReply(ErrorCode::Failed, e.what());
+    return errorReply(ErrorCode::Failed, e.what(), id);
   }
   catch (...)
   {
-    return errorReply(ErrorCode::Failed, "Unknown exception");
+    return errorReply(ErrorCode::Failed, "Unknown exception", id);
   }
 }
 

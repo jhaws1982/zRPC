@@ -25,6 +25,7 @@
  * SOFTWARE.
  */
 
+#include <random>
 #include "zRPC.hpp"
 
 namespace zRPC
@@ -36,8 +37,25 @@ Client::Client(const std::string &identity,
     m_ctx(1),
     m_identity(identity),
     m_uri(uri),
-    m_timeout(timeout)
+    m_timeout(timeout),
+    m_idPrefix(0)
 {
+  // Mix a hardware random value with the time and this object's address, in
+  // case std::random_device is deterministic on some platform
+  std::random_device rd;
+  m_idPrefix =
+      (std::uint64_t{rd()} << 32) ^ std::uint64_t{rd()} ^
+      static_cast<std::uint64_t>(
+          std::chrono::steady_clock::now().time_since_epoch().count()) ^
+      static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(this));
+}
+
+RequestId Client::newRequestId(void)
+{
+  const std::uint64_t halves[2] = {m_idPrefix, m_nextCall.fetch_add(1)};
+  RequestId id;
+  std::memcpy(id.bytes.data(), halves, sizeof(halves));
+  return id;
 }
 
 }  // namespace zRPC

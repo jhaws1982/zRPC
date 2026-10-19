@@ -26,6 +26,7 @@
  */
 
 #include <array>
+#include <cstring>
 #include "zRPC.hpp"
 
 namespace zRPC
@@ -35,9 +36,33 @@ namespace detail
 namespace
 {
 /**
- * @brief Number of fields in an envelope: version, status, payload, CRC
+ * @brief Number of fields in an envelope: version, status, id, payload, CRC
  */
-constexpr std::uint32_t kEnvelopeFields = 4;
+constexpr std::uint32_t kEnvelopeFields = 5;
+
+/**
+ * @brief Size of a request ID on the wire
+ */
+constexpr std::size_t kIdSize = sizeof(RequestId::bytes);
+
+/**
+ * @brief MessagePack markers of the fixed-width encodings sealPayload() uses
+ */
+constexpr std::uint8_t kFixArray5 = 0x95;
+constexpr std::uint8_t kUint8 = 0xcc;
+constexpr std::uint8_t kBin8 = 0xc4;
+constexpr std::uint8_t kUint32 = 0xce;
+
+/**
+ * @brief Offset of the request ID in an envelope:
+ * [array][uint8 version][uint8 status][bin8 length]
+ */
+constexpr std::size_t kIdOffset = 1 + 2 + 2 + 2;
+
+/**
+ * @brief Size of the encoded CRC at the end of an envelope
+ */
+constexpr std::size_t kCrcSize = 1 + 4;
 
 /**
  * @brief Build the lookup table for CRC-32/ISO-HDLC (reflected polynomial
@@ -84,20 +109,26 @@ std::uint32_t crcUpdate(std::uint32_t crc, const void *data, std::size_t size)
 }
 
 /**
- * @brief CRC of an envelope: the version and status bytes, then the payload,
- * so a corrupted status cannot turn a value into an error or vice versa
+ * @brief CRC of an envelope: the version and status bytes, the request ID,
+ * then the payload. A corrupted status cannot turn a value into an error, nor
+ * a corrupted ID route a reply to the wrong call.
  *
  * @param[in] status Status byte
+ * @param[in] id Request ID bytes (none for a publication)
+ * @param[in] idSize Number of request ID bytes
  * @param[in] payload Payload bytes
  * @param[in] size Number of payload bytes
  * @return std::uint32_t CRC-32 of the header and payload
  */
 std::uint32_t envelopeCrc(std::uint8_t status,
+                          const void *id,
+                          std::size_t idSize,
                           const char *payload,
                           std::size_t size)
 {
   const std::uint8_t header[2] = {kWireVersion, status};
-  const auto crc = crcUpdate(0xFFFFFFFFU, header, sizeof(header));
+  auto crc = crcUpdate(0xFFFFFFFFU, header, sizeof(header));
+  crc = crcUpdate(crc, id, idSize);
   return crcUpdate(crc, payload, size) ^ 0xFFFFFFFFU;
 }
 }  // namespace
@@ -107,20 +138,52 @@ std::uint32_t crc32(const void *data, std::size_t size)
   return crcUpdate(0xFFFFFFFFU, data, size) ^ 0xFFFFFFFFU;
 }
 
-msgpack::sbuffer sealPayload(Status status, const msgpack::sbuffer &payload)
+msgpack::sbuffer sealPayload(Status status,
+                             const msgpack::sbuffer &payload,
+                             const std::optional<RequestId> &id)
 {
   const auto statusByte = static_cast<std::uint8_t>(status);
   const auto size = static_cast<std::uint32_t>(payload.size());
+  const char *idBytes =
+      id ? reinterpret_cast<const char *>(id->bytes.data()) : nullptr;
+  const auto idSize = static_cast<std::uint32_t>(id ? kIdSize : 0);
 
+  // Fixed-width encodings up to the payload, and for the CRC, so that peek()
+  // finds the ID and CRC at fixed offsets
   msgpack::sbuffer out;
   msgpack::packer<msgpack::sbuffer> pk(out);
   pk.pack_array(kEnvelopeFields);
-  pk.pack_uint8(kWireVersion);
-  pk.pack_uint8(statusByte);
+  pk.pack_fix_uint8(kWireVersion);
+  pk.pack_fix_uint8(statusByte);
+  pk.pack_bin(idSize);
+  if (idSize > 0)
+  {
+    pk.pack_bin_body(idBytes, idSize);
+  }
   pk.pack_bin(size);
   pk.pack_bin_body(payload.data(), size);
-  pk.pack_uint32(envelopeCrc(statusByte, payload.data(), payload.size()));
+  pk.pack_fix_uint32(
+      envelopeCrc(statusByte, idBytes, idSize, payload.data(), payload.size()));
   return out;
+}
+
+std::optional<Peeked> peek(const void *data, std::size_t size)
+{
+  const auto *bytes = static_cast<const std::uint8_t *>(data);
+  if (size < kIdOffset + kIdSize + kCrcSize || bytes[0] != kFixArray5 ||
+      bytes[1] != kUint8 || bytes[2] != kWireVersion || bytes[3] != kUint8 ||
+      bytes[5] != kBin8 || bytes[6] != kIdSize ||
+      bytes[size - kCrcSize] != kUint32)
+  {
+    return std::nullopt;
+  }
+
+  Peeked peeked;
+  std::memcpy(peeked.id.bytes.data(), bytes + kIdOffset, kIdSize);
+  const auto *crc = bytes + size - kCrcSize + 1;
+  peeked.crc = (std::uint32_t{crc[0]} << 24) | (std::uint32_t{crc[1]} << 16) |
+               (std::uint32_t{crc[2]} << 8) | std::uint32_t{crc[3]};
+  return peeked;
 }
 
 Opened open(const void *data, std::size_t size)
@@ -146,7 +209,8 @@ Opened open(const void *data, std::size_t size)
   if (field[0].type != msgpack::type::POSITIVE_INTEGER ||
       field[1].type != msgpack::type::POSITIVE_INTEGER ||
       field[2].type != msgpack::type::BIN ||
-      field[3].type != msgpack::type::POSITIVE_INTEGER)
+      field[3].type != msgpack::type::BIN ||
+      field[4].type != msgpack::type::POSITIVE_INTEGER)
   {
     throw ProtocolError("Malformed message: not a zRPC envelope");
   }
@@ -162,15 +226,27 @@ Opened open(const void *data, std::size_t size)
                         std::to_string(field[1].via.u64));
   }
 
+  const auto &id = field[2].via.bin;
+  if (id.size != 0 && id.size != kIdSize)
+  {
+    throw ProtocolError("Malformed message: bad request ID");
+  }
+
   const auto status = static_cast<std::uint8_t>(field[1].via.u64);
-  const auto &payload = field[2].via.bin;
-  if (envelopeCrc(status, payload.ptr, payload.size) != field[3].via.u64)
+  const auto &payload = field[3].via.bin;
+  if (envelopeCrc(status, id.ptr, id.size, payload.ptr, payload.size) !=
+      field[4].via.u64)
   {
     throw ProtocolError("CRC mismatch: message corrupted in transit");
   }
 
   Opened opened;
   opened.status = static_cast<Status>(status);
+  if (id.size == kIdSize)
+  {
+    opened.id.emplace();
+    std::memcpy(opened.id->bytes.data(), id.ptr, kIdSize);
+  }
   try
   {
     // Without a reference callback, unpack copies strings and binary data
@@ -186,4 +262,18 @@ Opened open(const void *data, std::size_t size)
 }
 
 }  // namespace detail
+
+std::string RequestId::toString() const
+{
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string text;
+  text.reserve(2 * bytes.size());
+  for (const auto b : bytes)
+  {
+    text += kHex[b >> 4];
+    text += kHex[b & 0x0F];
+  }
+  return text;
+}
+
 }  // namespace zRPC
