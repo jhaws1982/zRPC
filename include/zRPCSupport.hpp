@@ -146,39 +146,5 @@ using numArgs = typename callable_traits<F>::num_args;
 template <typename F>
 using typeArgs = typename callable_traits<F>::type_args;
 
-/**
- * @brief Call the function using C++17 fold expression for the arguments
- *
- * @tparam F Callable type to bind (auto-detected by compiler)
- * @tparam Args Arguments to the callable functor
- * @tparam I Index sequence into the tuple
- * @param func Functor to call
- * @param params Forwarded variadic arguments to the functor
- * @return decltype(auto) Auto-detected return value of the functor
- */
-template <typename F, typename... Args, std::size_t... I>
-decltype(auto) call_detail(F func,
-                           std::tuple<Args...> &&params,
-                           std::index_sequence<I...>)
-{
-  return func(std::get<I>(params)...);
-}
-
-/**
- * @brief Calls a functor with arguments provided as a std::tuple
- *
- * @tparam F Callable type to bind (auto-detected by compiler)
- * @tparam Args Arguments to the callable functor
- * @param func Functor to call
- * @param args Variadic arguments to the functor
- * @return decltype(auto) Auto-detected return value of the functor
- */
-template <typename F, typename... Args>
-decltype(auto) call(F func, std::tuple<Args...> &args)
-{
-  return call_detail(func, std::forward<std::tuple<Args...>>(args),
-                     std::index_sequence_for<Args...>{});
-}
-
 }  // namespace support
 }  // namespace zRPC
