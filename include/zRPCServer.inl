@@ -49,6 +49,24 @@ void Server::bind(const std::string &name, F func)
   }
 }
 
+template <typename C, typename R, typename... A>
+void Server::bind(const std::string &name, R (C::*method)(A...), C *object)
+{
+  bind(name,
+       [object, method](A... args) -> R
+       { return (object->*method)(std::forward<A>(args)...); });
+}
+
+template <typename C, typename R, typename... A>
+void Server::bind(const std::string &name,
+                  R (C::*method)(A...) const,
+                  const C *object)
+{
+  bind(name,
+       [object, method](A... args) -> R
+       { return (object->*method)(std::forward<A>(args)...); });
+}
+
 /**
  * @brief Insert non-void returning function into RPC map
  *
