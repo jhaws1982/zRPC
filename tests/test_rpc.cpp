@@ -28,6 +28,7 @@
 #include <atomic>
 #include <future>
 #include <mutex>
+#include <set>
 #include <type_traits>
 #include "helpers.hpp"
 
@@ -131,6 +132,91 @@ std::optional<ErrorCode> remoteError(F &&call)
   }
   return std::nullopt;
 }
+
+/**
+ * @brief A stand-in server that answers every request with 42, optionally
+ * more than once, and records the connection (routing ID) each request
+ * arrived on
+ */
+class CountingServer
+{
+public:
+  explicit CountingServer(int repliesPerRequest = 1) :
+      m_repliesPerRequest(repliesPerRequest),
+      m_ctx(1),
+      m_sock(m_ctx, zmq::socket_type::router)
+  {
+    m_sock.bind("tcp://127.0.0.1:*");
+    m_sock.set(zmq::sockopt::rcvtimeo, 50);
+    m_endpoint = m_sock.get(zmq::sockopt::last_endpoint);
+    m_thread = std::thread([this]() { serve(); });
+  }
+
+  ~CountingServer()
+  {
+    m_stop = true;
+    m_thread.join();
+  }
+
+  const std::string &endpoint() const
+  {
+    return m_endpoint;
+  }
+
+  std::size_t connections()
+  {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_connections.size();
+  }
+
+  std::size_t requests()
+  {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_requests;
+  }
+
+private:
+  void serve()
+  {
+    while (!m_stop)
+    {
+      zmq::message_t client;
+      zmq::message_t request;
+      if (!m_sock.recv(client))
+      {
+        continue;
+      }
+      (void)m_sock.recv(request);
+      const auto opened = zRPC::detail::open(request.data(), request.size());
+      {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_connections.insert(client.to_string());
+        ++m_requests;
+      }
+
+      const auto reply =
+          zRPC::detail::seal(zRPC::detail::Status::Ok, 42, opened.id);
+      for (int i = 0; i < m_repliesPerRequest; ++i)
+      {
+        zmq::message_t to;
+        to.copy(client);
+        (void)m_sock.send(to, zmq::send_flags::sndmore);
+        (void)m_sock.send(zmq::const_buffer(reply.data(), reply.size()),
+                          zmq::send_flags::none);
+      }
+    }
+  }
+
+  int m_repliesPerRequest;
+  zmq::context_t m_ctx;
+  zmq::socket_t m_sock;
+  std::string m_endpoint;
+  std::atomic<bool> m_stop{false};
+  std::mutex m_mutex;
+  std::set<std::string> m_connections;
+  std::size_t m_requests{0};
+  std::thread m_thread;
+};
 
 /**
  * @brief Error carried by a raw reply envelope
@@ -522,4 +608,70 @@ TEST(RpcLoadBalancing, AllWorkersAreUsedAndExtraCallsWaitForAFreeWorker)
   const auto twoRounds = timeCalls(2 * kWorkers);
   EXPECT_GE(twoRounds, kSleepMs * 2 - 50);
   EXPECT_LT(twoRounds, kSleepMs * 3);
+}
+
+// ---------------------------------------------------------------------------
+// Connection reuse
+// ---------------------------------------------------------------------------
+
+TEST(RpcConnections, SequentialCallsReuseOneConnection)
+{
+  CountingServer srv;
+  zRPC::Client client("c", srv.endpoint(), 5s);
+  for (int i = 0; i < 20; ++i)
+  {
+    EXPECT_EQ(client.call("anything", i).get().as<int>(), 42);
+  }
+  EXPECT_EQ(srv.requests(), 20U);
+  EXPECT_EQ(srv.connections(), 1U);
+}
+
+TEST(RpcConnections, ConcurrentCallsUseAtMostOneConnectionEach)
+{
+  CountingServer srv;
+  zRPC::Client client("c", srv.endpoint(), 5s);
+  std::vector<std::thread> threads;
+  for (int t = 0; t < 4; ++t)
+  {
+    threads.emplace_back(
+        [&client]()
+        {
+          for (int i = 0; i < 10; ++i)
+          {
+            EXPECT_EQ(client.call("anything").get().as<int>(), 42);
+          }
+        });
+  }
+  for (auto &th : threads)
+  {
+    th.join();
+  }
+  EXPECT_EQ(srv.requests(), 40U);
+  EXPECT_LE(srv.connections(), 4U);
+}
+
+TEST(RpcConnections, StaleRepliesOnAReusedConnectionAreSkipped)
+{
+  // Every reply arrives twice; the duplicate is still queued on the reused
+  // connection when the next call starts, and must not be taken for its reply
+  CountingServer srv(2);
+  zRPC::Client client("c", srv.endpoint(), 5s);
+  for (int i = 0; i < 5; ++i)
+  {
+    EXPECT_EQ(client.call("anything").get().as<int>(), 42);
+  }
+  EXPECT_EQ(srv.requests(), 5U);
+  EXPECT_EQ(srv.connections(), 1U);
+}
+
+TEST_F(Rpc, CallsAfterATimeoutGetTheirOwnReplies)
+{
+  EXPECT_THROW(m_client.call(100ms, "sleep", 400), zRPC::TimeoutError);
+  for (int i = 0; i < 3; ++i)
+  {
+    EXPECT_EQ(m_client.call("add", i, 1).get().as<int>(), i + 1);
+  }
+  // By now the timed-out call's reply has been sent too
+  std::this_thread::sleep_for(400ms);
+  EXPECT_EQ(m_client.call("add", 20, 22).get().as<int>(), 42);
 }
