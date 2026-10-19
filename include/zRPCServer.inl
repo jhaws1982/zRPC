@@ -137,13 +137,13 @@ void Server::insertFunc(const std::string &name,
                             F func,
                             support::nonvoid_rtn const &)
 {
-  m_rpcs[name] = [func, name](msgpack::object const &args)
+  m_rpcs[name] = [func, name](msgpack::object const &args) mutable
   {
     auto realArgs = detail::convertArgs<F>(name, args);
 
     // Call the function
     auto zone = std::make_unique<msgpack::zone>();
-    auto rtnval = support::call(func, realArgs);
+    auto rtnval = std::apply(func, realArgs);
     auto rtnobj = msgpack::object(rtnval, *zone);
 
     return std::make_unique<msgpack::object_handle>(rtnobj, std::move(zone));
@@ -162,12 +162,12 @@ void Server::insertFunc(const std::string &name,
                             F func,
                             support::void_rtn const &)
 {
-  m_rpcs[name] = [func, name](msgpack::object const &args)
+  m_rpcs[name] = [func, name](msgpack::object const &args) mutable
   {
     auto realArgs = detail::convertArgs<F>(name, args);
 
     // Call the function
-    support::call(func, realArgs);
+    std::apply(func, realArgs);
 
     return std::make_unique<msgpack::object_handle>();
   };

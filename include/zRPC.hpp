@@ -319,6 +319,10 @@ public:
   /**
    * @brief Bind a function to an RPC name
    *
+   * Bound functions run on the worker threads, so one may be running for
+   * several clients at once. A function object keeps its state between calls
+   * and must synchronise any state it changes.
+   *
    * @tparam F Callable type to bind (auto-detected by compiler)
    * @param[in] name Name of the RPC
    * @param[in] func Callable object to bind to the RPC name
