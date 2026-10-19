@@ -38,42 +38,11 @@ msgpack::object_handle Client::call(std::chrono::milliseconds timeout,
                                     const std::string &name,
                                     A... args)
 {
-  // Ensure socket is connected to the server
-  zmq::socket_t l_sock(m_ctx, zmq::socket_type::dealer);
-  l_sock.set(zmq::sockopt::rcvtimeo, detail::zmqTimeout(timeout));
-  // Once the call returns nothing on this socket is worth delivering; an
-  // unsent request after a timeout must not hold up closing the context
-  l_sock.set(zmq::sockopt::linger, 0);
-  l_sock.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
-  l_sock.connect(m_uri);
-
-  // Send [name, [args...]] in a CRC-protected envelope
+  // [name, [args...]] in a CRC-protected envelope carrying a new request ID
   const auto id = newRequestId();
   const auto request = detail::seal(
       detail::Status::Ok,
       std::forward_as_tuple(name, std::forward_as_tuple(args...)), id);
-  (void)l_sock.send(zmq::const_buffer(request.data(), request.size()),
-                    zmq::send_flags::none);
-
-  // Wait for response or timeout event
-  zmq::message_t msg;
-  if (!l_sock.recv(msg))
-  {
-    throw TimeoutError("zRPC client '" + m_identity + "': no reply to '" +
-                       name + "' within " + std::to_string(timeout.count()) +
-                       " ms");
-  }
-
-  auto reply = detail::open(msg.data(), msg.size());
-  if (reply.id != id)
-  {
-    throw ProtocolError("zRPC client '" + m_identity + "': reply to '" + name +
-                        "' belongs to a different call");
-  }
-  if (reply.status == detail::Status::Error)
-  {
-    throw RemoteError(reply.body.get().as<Error>());
-  }
-  return std::move(reply.body);
+  return exchange(id, request, name, timeout);
 }
 }  // namespace zRPC

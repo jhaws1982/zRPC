@@ -516,17 +516,57 @@ private:
   std::atomic<std::uint64_t> m_nextCall{0};
 
   /**
+   * @brief Guards m_idle
+   */
+  std::mutex m_poolMutex;
+
+  /**
+   * @brief Connected sockets not in use by any call. A call borrows one, or
+   * opens a new one if none is idle, and returns it when it has its reply.
+   */
+  std::vector<zmq::socket_t> m_idle;
+
+  /**
    * @brief A request ID no other call has used
    */
   RequestId newRequestId(void);
+
+  /**
+   * @brief Take an idle connected socket, or connect a new one
+   */
+  zmq::socket_t acquire(void);
+
+  /**
+   * @brief Return a socket for another call to reuse
+   *
+   * @param[in] sock Socket whose call has received its reply
+   */
+  void release(zmq::socket_t sock);
+
+  /**
+   * @brief Send a sealed request and wait for its reply
+   *
+   * @param[in] id Request ID sealed into the request
+   * @param[in] request Sealed request
+   * @param[in] name Name of the RPC, for error messages
+   * @param[in] timeout Time to wait for the reply
+   * @return msgpack::object_handle Value returned by the RPC
+   */
+  msgpack::object_handle exchange(const RequestId &id,
+                                  const msgpack::sbuffer &request,
+                                  const std::string &name,
+                                  std::chrono::milliseconds timeout);
 
 public:
   /**
    * @brief Construct a new zRPC::Client object
    *
-   * Each call connects to the server separately and 0MQ assigns every
-   * connection a routing ID that is unique on the server, so any number of
-   * clients (in any number of processes) may share the same identity string.
+   * Calls reuse connections: each call borrows an idle connection from the
+   * client's pool, or opens one, and returns it when it has its reply. A
+   * client therefore holds one connection per call it has had in flight at
+   * once. 0MQ assigns every connection a routing ID that is unique on the
+   * server, so any number of clients (in any number of processes) may share
+   * the same identity string.
    *
    * @param[in] identity Name of the client, used in diagnostics.
    * @param[in] uri Zero-MQ address:port to bind listening socket to.

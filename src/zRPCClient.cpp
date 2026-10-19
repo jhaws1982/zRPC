@@ -25,6 +25,7 @@
  * SOFTWARE.
  */
 
+#include <algorithm>
 #include <random>
 #include "zRPC.hpp"
 
@@ -48,6 +49,91 @@ Client::Client(const std::string &identity,
       static_cast<std::uint64_t>(
           std::chrono::steady_clock::now().time_since_epoch().count()) ^
       static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(this));
+}
+
+zmq::socket_t Client::acquire(void)
+{
+  {
+    std::lock_guard<std::mutex> lock(m_poolMutex);
+    if (!m_idle.empty())
+    {
+      auto sock = std::move(m_idle.back());
+      m_idle.pop_back();
+      return sock;
+    }
+  }
+
+  zmq::socket_t sock(m_ctx, zmq::socket_type::dealer);
+  // An unsent request is not worth delivering once its call has given up,
+  // and must not hold up closing the context
+  sock.set(zmq::sockopt::linger, 0);
+  sock.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
+  sock.connect(m_uri);
+  return sock;
+}
+
+void Client::release(zmq::socket_t sock)
+{
+  std::lock_guard<std::mutex> lock(m_poolMutex);
+  m_idle.push_back(std::move(sock));
+}
+
+msgpack::object_handle Client::exchange(const RequestId &id,
+                                        const msgpack::sbuffer &request,
+                                        const std::string &name,
+                                        std::chrono::milliseconds timeout)
+{
+  using std::chrono::milliseconds;
+  using std::chrono::steady_clock;
+
+  // A 0MQ error destroys the socket with this scope instead of returning it
+  auto sock = acquire();
+  (void)sock.send(zmq::const_buffer(request.data(), request.size()),
+                  zmq::send_flags::none);
+
+  const bool forever = timeout < milliseconds::zero();
+  const auto deadline =
+      steady_clock::now() + (forever ? milliseconds{} : timeout);
+  while (true)
+  {
+    const auto left = std::chrono::duration_cast<milliseconds>(
+        deadline - steady_clock::now());
+    sock.set(zmq::sockopt::rcvtimeo,
+             forever ? -1 : detail::zmqTimeout(std::max(left, milliseconds{})));
+
+    zmq::message_t msg;
+    if (!sock.recv(msg))
+    {
+      // The reply may still arrive on this socket, so it is not reused
+      throw TimeoutError("zRPC client '" + m_identity + "': no reply to '" +
+                         name + "' within " + std::to_string(timeout.count()) +
+                         " ms");
+    }
+
+    detail::Opened reply;
+    try
+    {
+      reply = detail::open(msg.data(), msg.size());
+    }
+    catch (const ProtocolError &)
+    {
+      release(std::move(sock));
+      throw;
+    }
+
+    // A reply to an earlier call that used this socket: not ours
+    if (reply.id != id)
+    {
+      continue;
+    }
+
+    release(std::move(sock));
+    if (reply.status == detail::Status::Error)
+    {
+      throw RemoteError(reply.body.get().as<Error>());
+    }
+    return std::move(reply.body);
+  }
 }
 
 RequestId Client::newRequestId(void)
