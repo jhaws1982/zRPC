@@ -101,6 +101,35 @@ inline constexpr std::uint8_t kWireVersion = 1;
 inline constexpr std::int64_t kMaxMessageSize = 64 * 1024 * 1024;
 
 /**
+ * @brief Whether a sealed message is small enough for peers to accept
+ *
+ * Every zRPC socket drops a peer that sends more than kMaxMessageSize, so a
+ * larger message would vanish without an error.
+ *
+ * @param[in] sealed Sealed message
+ * @return bool True if the message is within kMaxMessageSize
+ */
+inline bool fitsMessageLimit(const msgpack::sbuffer &sealed)
+{
+  return sealed.size() <= static_cast<std::size_t>(kMaxMessageSize);
+}
+
+/**
+ * @brief Describe a message that is over the size limit
+ *
+ * @param[in] what What the message is, e.g. "Reply to 'f'"
+ * @param[in] sealed The message
+ * @return std::string Text for an error
+ */
+inline std::string tooLarge(const std::string &what,
+                            const msgpack::sbuffer &sealed)
+{
+  return what + " is " + std::to_string(sealed.size()) +
+         " bytes, more than the " + std::to_string(kMaxMessageSize) +
+         "-byte message limit";
+}
+
+/**
  * @brief Limits applied when unpacking data received from a peer
  *
  * MessagePack allocates storage for an array or map as soon as it reads the

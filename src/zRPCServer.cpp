@@ -539,6 +539,13 @@ void Server::worker(void)
         res =
             errorReply(ErrorCode::Unknown, "Unknown exception", requestId(msg));
       }
+      // A larger reply would be dropped by the client's socket, and every
+      // resend would replay it, so the client would only ever see a timeout
+      if (!detail::fitsMessageLimit(res))
+      {
+        res = errorReply(ErrorCode::Failed, detail::tooLarge("Reply", res),
+                         requestId(msg));
+      }
       reply(sock, identity, res);
 
       if (t_stopAfterReply)

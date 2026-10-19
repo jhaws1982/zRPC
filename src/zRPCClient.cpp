@@ -86,6 +86,14 @@ msgpack::object_handle Client::exchange(const RequestId &id,
   using std::chrono::milliseconds;
   using Clock = std::chrono::steady_clock;
 
+  // The server would drop the connection rather than receive this, and the
+  // call would only ever time out
+  if (!detail::fitsMessageLimit(request))
+  {
+    throw ProtocolError("zRPC client '" + m_identity + "': " +
+                        detail::tooLarge("Request to '" + name + "'", request));
+  }
+
   const auto start = Clock::now();
   const bool forever = timeout < milliseconds::zero();
   const milliseconds resend{m_resendMs.load()};
