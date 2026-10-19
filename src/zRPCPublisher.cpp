@@ -40,6 +40,7 @@ Publisher::Publisher(const std::string &uri) :
     m_pub(m_ctx, zmq::socket_type::pub)
 {
   // Start the publisher socket and bind to its port; failure throws
+  m_pub.set(zmq::sockopt::linger, detail::zmqTimeout(detail::kLinger));
   m_pub.bind(uri);
   m_endpoint = m_pub.get(zmq::sockopt::last_endpoint);
 }

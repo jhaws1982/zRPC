@@ -48,6 +48,7 @@ void Subscriber::handler(const std::string &uri,
   {
     zmq::socket_t sock(m_ctx, zmq::socket_type::sub);
     sock.set(zmq::sockopt::maxmsgsize, detail::kMaxMessageSize);
+    sock.set(zmq::sockopt::linger, detail::zmqTimeout(detail::kLinger));
     sock.connect(uri);
 
     // Setup the subscription to the specific topic

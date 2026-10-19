@@ -375,6 +375,31 @@ TEST(PubSub, OversizedPublicationIsRejected)
   EXPECT_NO_THROW(pub.publish("t", std::string(1000, 'x')));
 }
 
+TEST(PubSub, DestroyingAPublisherDoesNotWaitForAStalledSubscriber)
+{
+  // A subscriber that stays connected but never reads, so publications
+  // back up in the publisher's queue
+  zmq::context_t ctx(1);
+  zmq::socket_t stalled(ctx, zmq::socket_type::sub);
+  stalled.set(zmq::sockopt::linger, 0);
+  stalled.set(zmq::sockopt::rcvhwm, 1);
+
+  auto pub = std::make_unique<zRPC::Publisher>("tcp://127.0.0.1:*");
+  stalled.connect(pub->endpoint());
+  stalled.set(zmq::sockopt::subscribe, "");
+  std::this_thread::sleep_for(200ms);
+
+  const std::string chunk(1U << 20, 'x');
+  for (int i = 0; i < 64; ++i)
+  {
+    pub->publish("t", chunk);
+  }
+
+  const auto start = Clock::now();
+  pub.reset();
+  EXPECT_LT(msSince(start), 5000);
+}
+
 TEST(PubSub, PortConstructorAndBindFailure)
 {
   zRPC::Publisher pub(uint16_t{0});
