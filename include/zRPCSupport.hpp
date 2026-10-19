@@ -40,10 +40,11 @@ struct callable_traits : callable_traits<decltype(&T::operator())>
 };
 
 /**
- * @brief Specializations of callable_traits to handle various other functor
- * types, such as lambdas and member functions
+ * @brief Specializations of callable_traits for the call operator of lambdas
+ * and other function objects. noexcept is part of a function's type, so it
+ * needs its own specializations.
  *
- * @tparam NS Containing namespace of the function
+ * @tparam NS Class that declares the call operator
  * @tparam R Return type of the function
  * @tparam A Function arguments
  */
@@ -53,6 +54,15 @@ struct callable_traits<R (NS::*)(A...)> : callable_traits<R (*)(A...)>
 };
 template <typename NS, typename R, typename... A>
 struct callable_traits<R (NS::*)(A...) const> : callable_traits<R (*)(A...)>
+{
+};
+template <typename NS, typename R, typename... A>
+struct callable_traits<R (NS::*)(A...) noexcept> : callable_traits<R (*)(A...)>
+{
+};
+template <typename NS, typename R, typename... A>
+struct callable_traits<R (NS::*)(A...) const noexcept> :
+    callable_traits<R (*)(A...)>
 {
 };
 
@@ -91,6 +101,17 @@ struct callable_traits<R (*)(A...)>
   using type_args = std::tuple<typename std::decay<A>::type...>;
 
   typedef typename rtn<R>::type f_rtn;
+};
+
+/**
+ * @brief Specialization for noexcept free functions
+ *
+ * @tparam R Return type of the function
+ * @tparam A Function arguments
+ */
+template <typename R, typename... A>
+struct callable_traits<R (*)(A...) noexcept> : callable_traits<R (*)(A...)>
+{
 };
 
 /**

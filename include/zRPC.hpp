@@ -230,6 +230,36 @@ public:
   template <typename F>
   void bind(const std::string &name, F func);
 
+  /**
+   * @brief Bind a member function of an object to an RPC name
+   *
+   * The object must outlive the server.
+   * @code
+   * srv.bind("add", &Calculator::add, &calc);
+   * @endcode
+   *
+   * @tparam C Class of the object
+   * @tparam R Return type of the member function
+   * @tparam A Argument types of the member function
+   * @param[in] name Name of the RPC
+   * @param[in] method Member function to call
+   * @param[in] object Object to call it on
+   * @throws std::logic_error if the server has already been started
+   * @throws std::runtime_error if the name is already bound
+   */
+  template <typename C, typename R, typename... A>
+  void bind(const std::string &name, R (C::*method)(A...), C *object);
+
+  /**
+   * @brief Bind a const member function of an object to an RPC name
+   *
+   * @copydetails bind(const std::string &, R (C::*)(A...), C *)
+   */
+  template <typename C, typename R, typename... A>
+  void bind(const std::string &name,
+            R (C::*method)(A...) const,
+            const C *object);
+
 private:
   /**
    * @brief Insert non-void returning function into RPC map
