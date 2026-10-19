@@ -82,6 +82,13 @@ enum class ErrorCode : std::uint8_t
    * malformed message, or another wire version)
    */
   BadRequest = 4,
+
+  /**
+   * @brief The call already ran, but its reply was no longer kept when this
+   * resend or retry arrived (see Server::rememberCalls()). It was not run
+   * again.
+   */
+  ReplyUnavailable = 5,
 };
 }  // namespace zRPC
 
@@ -334,6 +341,11 @@ private:
   std::size_t m_maxRemembered{100000};
 
   /**
+   * @brief Most bytes of replies the broker keeps for resends
+   */
+  std::size_t m_maxRememberedBytes{256 * 1024 * 1024};
+
+  /**
    * @brief Worker thread function
    */
   void worker(void);
@@ -430,17 +442,22 @@ public:
    * a resend arriving later, or after the server restarts, runs the call
    * again.
    *
-   * Memory grows with the call rate times the window, since each remembered
-   * call keeps its reply. Beyond `maxCalls` the oldest are forgotten early.
+   * Memory is bounded two ways. Beyond `maxCalls` finished calls, the oldest
+   * are forgotten early. Beyond `maxBytes` of stored replies, the oldest
+   * replies are dropped, but their calls stay remembered: a resend of one
+   * gets ErrorCode::ReplyUnavailable instead of running the call again.
    *
    * @param[in] window How long to remember a finished call, default 5
    * minutes. Zero forgets a call as soon as it has replied.
    * @param[in] maxCalls Most finished calls remembered at once, default
    * 100,000
+   * @param[in] maxBytes Most bytes of replies kept for resends, default 256
+   * MiB
    * @throws std::logic_error if the server has already been started
    */
   void rememberCalls(std::chrono::milliseconds window,
-                     std::size_t maxCalls = 100000);
+                     std::size_t maxCalls = 100000,
+                     std::size_t maxBytes = 256 * 1024 * 1024);
 
   /**
    * @brief Bind a function to an RPC name
