@@ -25,7 +25,7 @@
  * SOFTWARE.
  */
 
-#include <CRC.h>
+#include <array>
 #include "zRPC.hpp"
 
 namespace zRPC
@@ -40,12 +40,47 @@ namespace
 constexpr std::uint32_t kEnvelopeFields = 4;
 
 /**
- * @brief Lookup table for CRC-32, built once on first use
+ * @brief Build the lookup table for CRC-32/ISO-HDLC (reflected polynomial
+ * 0xEDB88320), the CRC used by Ethernet, zip and PNG
+ *
+ * @return std::array<std::uint32_t, 256> CRC of every possible byte
  */
-const CRC::Table<std::uint32_t, 32> &crcTable()
+constexpr std::array<std::uint32_t, 256> makeCrcTable()
 {
-  static const CRC::Table<std::uint32_t, 32> table(CRC::CRC_32());
+  std::array<std::uint32_t, 256> table{};
+  for (std::uint32_t i = 0; i < table.size(); ++i)
+  {
+    std::uint32_t c = i;
+    for (int bit = 0; bit < 8; ++bit)
+    {
+      c = (c & 1U) ? (0xEDB88320U ^ (c >> 1)) : (c >> 1);
+    }
+    table[i] = c;
+  }
   return table;
+}
+
+/**
+ * @brief CRC-32 lookup table, computed at compile time
+ */
+constexpr auto kCrcTable = makeCrcTable();
+
+/**
+ * @brief Feed more bytes into a running CRC-32 register
+ *
+ * @param[in] crc Register value: 0xFFFFFFFF to start, then the previous result
+ * @param[in] data Bytes to add
+ * @param[in] size Number of bytes
+ * @return std::uint32_t Updated register; invert it to get the CRC
+ */
+std::uint32_t crcUpdate(std::uint32_t crc, const void *data, std::size_t size)
+{
+  const auto *bytes = static_cast<const unsigned char *>(data);
+  for (std::size_t i = 0; i < size; ++i)
+  {
+    crc = kCrcTable[(crc ^ bytes[i]) & 0xFFU] ^ (crc >> 8);
+  }
+  return crc;
 }
 
 /**
@@ -62,10 +97,15 @@ std::uint32_t envelopeCrc(std::uint8_t status,
                           std::size_t size)
 {
   const std::uint8_t header[2] = {kWireVersion, status};
-  const auto crc = CRC::Calculate(header, sizeof(header), crcTable());
-  return CRC::Calculate(payload, size, crcTable(), crc);
+  const auto crc = crcUpdate(0xFFFFFFFFU, header, sizeof(header));
+  return crcUpdate(crc, payload, size) ^ 0xFFFFFFFFU;
 }
 }  // namespace
+
+std::uint32_t crc32(const void *data, std::size_t size)
+{
+  return crcUpdate(0xFFFFFFFFU, data, size) ^ 0xFFFFFFFFU;
+}
 
 msgpack::sbuffer sealPayload(Status status, const msgpack::sbuffer &payload)
 {
