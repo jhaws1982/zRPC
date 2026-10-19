@@ -135,6 +135,36 @@ inline std::string tooLarge(const std::string &what,
 inline constexpr std::size_t kMaxDepth = 64;
 
 /**
+ * @brief A time point some duration later, saturating instead of overflowing
+ *
+ * steady_clock counts nanoseconds, so adding a duration of more than about
+ * 292 years (std::chrono::milliseconds::max(), say, written to mean
+ * "forever") would overflow and wrap to a time in the past. A negative
+ * duration, or one too long to represent, gives time_point::max(): never.
+ *
+ * @param[in] from Starting time
+ * @param[in] after Duration to add
+ * @return std::chrono::steady_clock::time_point `from + after`, or
+ * time_point::max()
+ */
+inline std::chrono::steady_clock::time_point addSaturated(
+    std::chrono::steady_clock::time_point from, std::chrono::milliseconds after)
+{
+  using Clock = std::chrono::steady_clock;
+  if (after < std::chrono::milliseconds::zero())
+  {
+    return Clock::time_point::max();
+  }
+  const auto room = std::chrono::duration_cast<std::chrono::milliseconds>(
+      Clock::time_point::max() - from);
+  if (after >= room)
+  {
+    return Clock::time_point::max();
+  }
+  return from + std::chrono::duration_cast<Clock::duration>(after);
+}
+
+/**
  * @brief Convert a timeout to 0MQ's form: int milliseconds, -1 = forever.
  * Negative timeouts and any too long for an int (about 24 days) mean forever.
  *

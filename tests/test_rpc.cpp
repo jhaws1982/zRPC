@@ -141,8 +141,10 @@ std::optional<ErrorCode> remoteError(F &&call)
 class CountingServer
 {
 public:
-  explicit CountingServer(int repliesPerRequest = 1) :
+  explicit CountingServer(int repliesPerRequest = 1,
+                          std::chrono::milliseconds replyDelay = 0ms) :
       m_repliesPerRequest(repliesPerRequest),
+      m_replyDelay(replyDelay),
       m_ctx(1),
       m_sock(m_ctx, zmq::socket_type::router)
   {
@@ -193,6 +195,7 @@ private:
         m_connections.insert(client.to_string());
         ++m_requests;
       }
+      std::this_thread::sleep_for(m_replyDelay);
 
       const auto reply =
           zRPC::detail::seal(zRPC::detail::Status::Ok, 42, opened.id);
@@ -208,6 +211,7 @@ private:
   }
 
   int m_repliesPerRequest;
+  std::chrono::milliseconds m_replyDelay;
   zmq::context_t m_ctx;
   zmq::socket_t m_sock;
   std::string m_endpoint;
@@ -400,6 +404,22 @@ TEST_F(Rpc, AcceptsAnyDurationAsTimeout)
 {
   EXPECT_EQ(m_client.call(2s, "add", 1, 2).get().as<int>(), 3);
   EXPECT_EQ(m_client.call(zRPC::kWaitForever, "add", 1, 2).get().as<int>(), 3);
+}
+
+TEST_F(Rpc, HugeTimeoutsMeanForever)
+{
+  // Durations past steady_clock's ~292-year range used to wrap negative and
+  // time the call out before it was sent
+  EXPECT_EQ(m_client.call(std::chrono::milliseconds::max(), "add", 1, 2)
+                .get()
+                .as<int>(),
+            3);
+  EXPECT_EQ(m_client.call(std::chrono::hours(24 * 365 * 1000), "add", 1, 2)
+                .get()
+                .as<int>(),
+            3);
+  zRPC::Client patient("p", m_srv.endpoint(), std::chrono::milliseconds::max());
+  EXPECT_EQ(patient.call("add", 2, 2).get().as<int>(), 4);
 }
 
 TEST_F(Rpc, TimeoutThrowsTimeoutError)
@@ -999,4 +1019,28 @@ TEST(RpcConnections, OversizedRequestIsRejectedBeforeSending)
                zRPC::ProtocolError);
   EXPECT_LT(msSince(start), 1000);
   EXPECT_EQ(srv.requests(), 0U);
+}
+
+TEST(RpcConnections, HugeResendIntervalMeansNoResends)
+{
+  // A wrapped interval made the client resend on every pass of its loop
+  CountingServer srv(1, 300ms);
+  zRPC::Client client("c", srv.endpoint(), 5s);
+  client.setResendInterval(std::chrono::milliseconds::max());
+  EXPECT_EQ(client.call("anything").get().as<int>(), 42);
+  EXPECT_EQ(srv.requests(), 1U);
+}
+
+TEST(AtMostOnce, HugeWindowRemembersCalls)
+{
+  // A wrapped window made every finished call expire at once
+  CountingRuns srv(std::chrono::milliseconds::max());
+  const auto id = idNumber(1);
+  for (int i = 0; i < 2; ++i)
+  {
+    auto reply = rawRequest(srv.endpoint(), {requestWithId(id, "work", 0)});
+    ASSERT_TRUE(reply);
+    EXPECT_EQ(valueIn(*reply), 1);
+  }
+  EXPECT_EQ(srv.runs(), 1);
 }
