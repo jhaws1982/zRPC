@@ -72,7 +72,8 @@ enum class ErrorCode : std::uint8_t
   InvalidArguments = 2,
 
   /**
-   * @brief The bound function threw an exception
+   * @brief The bound function threw an exception, or its result was too
+   * large to send (see detail::kMaxMessageSize)
    */
   Failed = 3,
 
@@ -194,8 +195,8 @@ private:
 /**
  * @class ProtocolError zRPC.hpp "zRPC.hpp"
  *
- * @brief A message was corrupt or not understood: CRC mismatch, malformed
- * data, or a peer speaking another wire version
+ * @brief A message was corrupt or not understood (CRC mismatch, malformed
+ * data, or a peer speaking another wire version), or is too large to send
  */
 class ProtocolError : public Exception
 {
@@ -812,6 +813,8 @@ public:
    * @tparam T MessagePack-able object type
    * @param[in] topic Name of the topic to publish to
    * @param[in] data Data object to publish
+   * @throws zRPC::ProtocolError if the publication is larger than
+   * detail::kMaxMessageSize
    * @throws zmq::error_t on a 0MQ failure
    */
   template <class T>

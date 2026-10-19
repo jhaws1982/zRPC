@@ -35,6 +35,13 @@ void Publisher::publish(const std::string &topic, const T &data)
   const auto pub =
       detail::seal(detail::Status::Ok, std::forward_as_tuple(topic, data));
 
+  // Subscribers would drop the connection rather than receive this
+  if (!detail::fitsMessageLimit(pub))
+  {
+    throw ProtocolError(
+        detail::tooLarge("Publication on '" + topic + "'", pub));
+  }
+
   // Send the envelope after the topic. The topic travels in a frame of its
   // own so that subscribers can match it exactly, whatever characters it
   // contains.

@@ -261,6 +261,7 @@ protected:
     m_srv.bind("looksLikeAnError", &looksLikeAnError);
     m_srv.bind("boom", &boom);
     m_srv.bind("sleep", &sleepFor);
+    m_srv.bind("blob", [](std::size_t n) { return std::string(n, 'x'); });
     m_srv.bind("mul", [](double a, double b) { return a * b; });
     m_srv.bind("greet", [](const std::string &who) { return "hello " + who; });
     m_srv.bind("count", Counter{});
@@ -444,6 +445,18 @@ TEST_F(Rpc, HostileRequestsGetBadRequestRepliesAndServerSurvives)
   EXPECT_EQ(errorIn(*multi).m_code, ErrorCode::BadRequest);
 
   EXPECT_EQ(m_client.call("add", 20, 22).get().as<int>(), 42);
+}
+
+TEST_F(Rpc, OversizedReplyIsReportedRatherThanTimingOut)
+{
+  // The client's socket would drop a reply this large, and every resend
+  // would replay it: the call could only ever time out
+  const auto limit = static_cast<std::size_t>(zRPC::detail::kMaxMessageSize);
+  const auto start = Clock::now();
+  EXPECT_EQ(remoteError([&]() { m_client.call("blob", limit); }),
+            ErrorCode::Failed);
+  EXPECT_LT(msSince(start), 4000);
+  EXPECT_EQ(m_client.call("add", 1, 2).get().as<int>(), 3);
 }
 
 TEST_F(Rpc, OversizedMessageIsDroppedAndServerSurvives)
@@ -917,4 +930,16 @@ TEST(AtMostOnce, ClientRecoversWhenTheServerRestartsBetweenCalls)
   std::this_thread::sleep_for(500ms);
   srv = std::make_unique<CountingRuns>(5min, 100000, endpoint);
   EXPECT_EQ(pending.get().get().as<int>(), 42);
+}
+
+TEST(RpcConnections, OversizedRequestIsRejectedBeforeSending)
+{
+  CountingServer srv;
+  zRPC::Client client("c", srv.endpoint(), 5s);
+  const auto limit = static_cast<std::size_t>(zRPC::detail::kMaxMessageSize);
+  const auto start = Clock::now();
+  EXPECT_THROW(client.call("anything", std::string(limit, 'x')),
+               zRPC::ProtocolError);
+  EXPECT_LT(msSince(start), 1000);
+  EXPECT_EQ(srv.requests(), 0U);
 }

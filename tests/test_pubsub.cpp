@@ -355,6 +355,14 @@ TEST(PubSub, PublishAcceptsTemporariesAndConstData)
       }));
 }
 
+TEST(PubSub, OversizedPublicationIsRejected)
+{
+  zRPC::Publisher pub("tcp://127.0.0.1:*");
+  const auto limit = static_cast<std::size_t>(zRPC::detail::kMaxMessageSize);
+  EXPECT_THROW(pub.publish("t", std::string(limit, 'x')), zRPC::ProtocolError);
+  EXPECT_NO_THROW(pub.publish("t", std::string(1000, 'x')));
+}
+
 TEST(PubSub, PortConstructorAndBindFailure)
 {
   zRPC::Publisher pub(uint16_t{0});
