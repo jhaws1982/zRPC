@@ -29,6 +29,23 @@ in the RPC server, were borrowed from rpclib (https://github.com/rpclib/rpclib).
 - Any argument or return value associated with a function must be packable by
   MsgPack, otherwise you will be unable to package the argument properly for
   passing between client and server.
+- A call either returns the RPC's value or throws, so the value comes out in a
+  single `as` call and can never be mistaken for an error:
+  ```cpp
+  try
+  {
+    int sum = client.call("add", 2, 3).get().as<int>();
+  }
+  catch (const zRPC::RemoteError &e)  // the server reported an error
+  {
+    // e.code(): NotFound, InvalidArguments, Failed (the function threw), ...
+  }
+  catch (const zRPC::TimeoutError &e) {}   // no reply in time
+  catch (const zRPC::ProtocolError &e) {}  // corrupt or incompatible reply
+  ```
+- Every request, reply and publication is a CRC-32 protected envelope
+  `[version, status, payload, crc]`. The CRC detects accidental corruption,
+  not tampering; use 0MQ CURVE security on untrusted networks.
 - There is no built-in way to stop a server remotely, and no authentication.
   If clients should be able to stop the server, bind an RPC for it yourself:
   `srv.bind("terminate", [&srv]() { srv.stop(); });`
@@ -45,4 +62,4 @@ in the RPC server, were borrowed from rpclib (https://github.com/rpclib/rpclib).
 - PlantUML class diagrams
 
 ## BUGS
-- Determine how to return errors; zRPCError is fine, but how to get either error or value out in single 'as' call?
+- None known.

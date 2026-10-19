@@ -28,16 +28,19 @@
 #ifndef _ZRPC_HPP_
 #define _ZRPC_HPP_
 
-#include <CRC.h>
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
 #include <zmq.hpp>
+#include "zRPCProtocol.hpp"
 #include "zRPCSupport.hpp"
 
 #pragma GCC diagnostic push
@@ -47,34 +50,133 @@
 
 namespace zRPC
 {
-namespace detail
+/**
+ * @brief Why the server could not return a value for a call
+ */
+enum class ErrorCode : std::uint8_t
+{
+  /**
+   * @brief Unclassified failure
+   */
+  Unknown = 0,
+
+  /**
+   * @brief No RPC is bound under the requested name
+   */
+  NotFound = 1,
+
+  /**
+   * @brief The RPC was called with the wrong number or types of arguments
+   */
+  InvalidArguments = 2,
+
+  /**
+   * @brief The bound function threw an exception
+   */
+  Failed = 3,
+
+  /**
+   * @brief The request was corrupt or not understood (CRC mismatch,
+   * malformed message, or another wire version)
+   */
+  BadRequest = 4,
+};
+}  // namespace zRPC
+
+MSGPACK_ADD_ENUM(zRPC::ErrorCode);
+
+namespace zRPC
 {
 /**
- * @brief Largest single message accepted from a peer, in bytes
+ * @class Error zRPC.hpp "zRPC.hpp"
+ *
+ * @brief Defines the zRPC error class used to report errors.
  */
-inline constexpr std::int64_t kMaxMessageSize = 64 * 1024 * 1024;
+struct Error
+{
+  /**
+   * @brief Error message
+   */
+  std::string m_msg;
+
+  /**
+   * @brief Category of the error
+   */
+  ErrorCode m_code{ErrorCode::Unknown};
+
+  MSGPACK_DEFINE(m_msg, m_code)
+};
 
 /**
- * @brief Limits applied when unpacking data received from a peer
+ * @class Exception zRPC.hpp "zRPC.hpp"
  *
- * MessagePack allocates storage for an array or map as soon as it reads the
- * header, before checking that the elements are present, so a few hostile
- * bytes could otherwise demand gigabytes. Strings and binary data are only
- * copied once their bytes have arrived, so they are bounded by message size.
- *
- * @return msgpack::unpack_limit Limits to pass to msgpack::unpack
+ * @brief Base class of the exceptions zRPC throws for failed calls
  */
-inline msgpack::unpack_limit unpackLimits()
+class Exception : public std::runtime_error
 {
-  constexpr auto maxBytes = static_cast<std::size_t>(kMaxMessageSize);
-  return msgpack::unpack_limit(/* array */ 1U << 17,
-                               /* map */ 1U << 16,
-                               /* str */ maxBytes,
-                               /* bin */ maxBytes,
-                               /* ext */ maxBytes,
-                               /* depth */ 16);
-}
-}  // namespace detail
+public:
+  using std::runtime_error::runtime_error;
+};
+
+/**
+ * @class RemoteError zRPC.hpp "zRPC.hpp"
+ *
+ * @brief The server reported an error instead of returning a value
+ */
+class RemoteError : public Exception
+{
+public:
+  /**
+   * @brief Construct a new zRPC::RemoteError from the server's error
+   *
+   * @param[in] err Error reported by the server
+   */
+  explicit RemoteError(Error err) : Exception(err.m_msg), m_err(std::move(err))
+  {
+  }
+
+  /**
+   * @brief Error reported by the server
+   */
+  const Error &error() const noexcept
+  {
+    return m_err;
+  }
+
+  /**
+   * @brief Category of the error reported by the server
+   */
+  ErrorCode code() const noexcept
+  {
+    return m_err.m_code;
+  }
+
+private:
+  Error m_err;
+};
+
+/**
+ * @class TimeoutError zRPC.hpp "zRPC.hpp"
+ *
+ * @brief No reply arrived within the call's timeout
+ */
+class TimeoutError : public Exception
+{
+public:
+  using Exception::Exception;
+};
+
+/**
+ * @class ProtocolError zRPC.hpp "zRPC.hpp"
+ *
+ * @brief A message was corrupt or not understood: CRC mismatch, malformed
+ * data, or a peer speaking another wire version
+ */
+class ProtocolError : public Exception
+{
+public:
+  using Exception::Exception;
+};
 
 /**
  * @class Server zRPC.hpp "zRPC.hpp"
@@ -134,22 +236,18 @@ private:
   std::atomic<bool> m_started{false};
 
   /**
-   * @brief CRC table for use in efficient CRC calculations
-   */
-  CRC::Table<std::uint32_t, 32> m_crcTable;
-
-  /**
    * @brief Worker thread function
    */
   void worker(void);
 
   /**
-   * @brief Decode a request, run the requested RPC and build its response
+   * @brief Decode a request, run the requested RPC and build its reply
    *
    * @param[in] msg Request received from the client
-   * @return std::unique_ptr<msgpack::object_handle> Response to send back
+   * @return msgpack::sbuffer Reply envelope carrying the RPC's value, or a
+   * zRPC::Error saying why there is none
    */
-  std::unique_ptr<msgpack::object_handle> process(const zmq::message_t &msg);
+  msgpack::sbuffer process(const zmq::message_t &msg);
 
   /**
    * @brief Shut down the 0MQ context, unblocking the broker and all workers
@@ -162,11 +260,11 @@ private:
    *
    * @param[in] sock Socket to reply on
    * @param[in] identity Client identity to reply to
-   * @param[in] res MsgPack object to reply with
+   * @param[in] res Reply envelope to send
    */
   void reply(zmq::socket_t &sock,
              zmq::message_t &identity,
-             std::unique_ptr<msgpack::object_handle> &res) const;
+             const msgpack::sbuffer &res) const;
 
 public:
   /**
@@ -292,9 +390,19 @@ private:
  * @brief Implements a 0MQ-based client.
  *
  * This provides a mechanism to call the RPC just like a regular function with
- * arguments, with the first argument always being the name of the RPC. If the
- * arguments do not match the function on the remote server, an error is
- * returned from the server.
+ * arguments, with the first argument always being the name of the RPC. A call
+ * either returns the RPC's value or throws, so a value and an error can never
+ * be mistaken for each other:
+ * @code
+ * try
+ * {
+ *   int sum = client.call("add", 2, 3).get().as<int>();
+ * }
+ * catch (const zRPC::RemoteError &e)
+ * {
+ *   // e.code() == zRPC::ErrorCode::NotFound, InvalidArguments, Failed, ...
+ * }
+ * @endcode
  */
 class Client
 {
@@ -323,11 +431,6 @@ private:
    */
   int m_timeout;
 
-  /**
-   * @brief CRC table for use in efficient CRC calculations
-   */
-  CRC::Table<std::uint32_t, 32> m_crcTable;
-
 public:
   /**
    * @brief Construct a new zRPC::Client object
@@ -353,8 +456,12 @@ public:
    * @tparam A Variadic argument list
    * @param[in] name Name of the RPC to call on the remote server
    * @param[in] args Variadic argument list to pass to the remote server
-   * @return msgpack::object_handle MessagePack'd object handle containing
-   * server response (if any)
+   * @return msgpack::object_handle Value returned by the RPC (nil for a void
+   * function)
+   * @throws zRPC::RemoteError if the server reported an error
+   * @throws zRPC::TimeoutError if no reply arrived in time
+   * @throws zRPC::ProtocolError if the reply was corrupt or not understood
+   * @throws zmq::error_t on a 0MQ failure, e.g. an invalid URI
    */
   template <typename... A>
   msgpack::object_handle call(const std::string &name, A... args);
@@ -369,28 +476,17 @@ public:
    * @param[in] timeout Timeout in ms before dropping the request, -1 = none
    * @param[in] name Name of the RPC to call on the remote server
    * @param[in] args Variadic argument list to pass to the remote server
-   * @return msgpack::object_handle MessagePack'd object handle containing
-   * server response (if any)
+   * @return msgpack::object_handle Value returned by the RPC (nil for a void
+   * function)
+   * @throws zRPC::RemoteError if the server reported an error
+   * @throws zRPC::TimeoutError if no reply arrived in time
+   * @throws zRPC::ProtocolError if the reply was corrupt or not understood
+   * @throws zmq::error_t on a 0MQ failure, e.g. an invalid URI
    */
   template <typename... A>
   msgpack::object_handle call(const int timeout,
                               const std::string &name,
                               A... args);
-};
-
-/**
- * @class Error zRPC.hpp "zRPC.hpp"
- *
- * @brief Defines the zRPC error class used to report errors.
- */
-struct Error
-{
-  /**
-   * @brief Error message
-   */
-  std::string m_msg;
-
-  MSGPACK_DEFINE(m_msg)
 };
 
 /**
@@ -423,11 +519,6 @@ private:
    */
   std::mutex m_mutex;
 
-  /**
-   * @brief CRC table for use in efficient CRC calculations
-   */
-  CRC::Table<std::uint32_t, 32> m_crcTable;
-
 public:
   /**
    * @brief Construct a new zRPC::Publisher object listening on all interfaces
@@ -457,7 +548,7 @@ public:
    * @param[in] data Data object to publish
    */
   template <class T>
-  void publish(const std::string &topic, T &data);
+  void publish(const std::string &topic, const T &data);
 };
 
 class Subscriber
@@ -494,11 +585,6 @@ private:
    * @brief Flag indicating whether the zRPC::Subscriber object is running
    */
   std::atomic<bool> m_running{false};
-
-  /**
-   * @brief CRC table for use in efficient CRC calculations
-   */
-  CRC::Table<std::uint32_t, 32> m_crcTable;
 
   /**
    * @brief Subscription handler function

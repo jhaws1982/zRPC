@@ -73,16 +73,17 @@ void client(void)
   l1t.join();
   l2t.join();
 
-  auto res = client.call("l3");
   try
   {
+    auto res = client.call("l3");
     std::cout << "l3 result = " << res.get().as<double>() << std::endl;
+    assert(false && "l3 is not bound and must not return a value");
   }
-  catch (const msgpack::v1::type_error &e)
+  catch (const zRPC::RemoteError &e)
   {
-    std::cout << "l3 error = '" << res.get().as<zRPC::Error>().m_msg << "'"
-              << std::endl;
-    assert(res.get().as<zRPC::Error>().m_msg == "'l3' RPC not found!");
+    std::cout << "l3 error = '" << e.what() << "'" << std::endl;
+    assert(e.code() == zRPC::ErrorCode::NotFound);
+    assert(e.error().m_msg == "'l3' RPC not found!");
   }
 
   client.call("terminate");  // shutdown the server

@@ -29,7 +29,7 @@
 
 using namespace zRPC;
 
-Subscriber::Subscriber() : m_ctx(1), m_crcTable(CRC::CRC_32())
+Subscriber::Subscriber() : m_ctx(1)
 {
 }
 

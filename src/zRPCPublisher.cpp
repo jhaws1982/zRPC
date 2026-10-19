@@ -36,8 +36,7 @@ Publisher::Publisher(const uint16_t port) :
 
 Publisher::Publisher(const std::string &uri) :
     m_ctx(1),
-    m_pub(m_ctx, zmq::socket_type::pub),
-    m_crcTable(CRC::CRC_32())
+    m_pub(m_ctx, zmq::socket_type::pub)
 {
   // Start the publisher socket and bind to its port; failure throws
   m_pub.bind(uri);

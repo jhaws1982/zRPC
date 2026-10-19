@@ -25,7 +25,7 @@
  * SOFTWARE.
  */
 
-#include <sstream>
+#include <iostream>
 #include "zRPC.hpp"
 
 using namespace zRPC;
@@ -85,38 +85,24 @@ void Subscriber::handler(const std::string &uri,
 
       try
       {
-        // Unpack the message to the topic/data/CRC tuple
-        auto data_tuple =
-            msgpack::unpack(static_cast<const char *>(msg.data()), msg.size(),
-                            nullptr, nullptr, detail::unpackLimits());
-        std::tuple<std::string, std::string, std::uint32_t> pubdata;
-        data_tuple.get().convert(pubdata);
+        // Validate the envelope (version, CRC, size limits) and unpack the
+        // sealed [topic, data] pair
+        auto pub = detail::open(msg.data(), msg.size());
+        std::tuple<std::string, msgpack::object> pubdata;
+        pub.body.get().convert(pubdata);
 
         auto &&rtopic = std::get<0>(pubdata);
-        auto &&rdata = std::get<1>(pubdata);
-        auto &&rcrc = std::get<2>(pubdata);
-        std::uint32_t check =
-            CRC::Calculate(rdata.data(), rdata.size(), m_crcTable);
+        if (rtopic != rtopicMsg.to_string_view())
+        {
+          throw ProtocolError("topic frame '" +
+                              std::string(rtopicMsg.to_string_view()) +
+                              "' does not match the publication");
+        }
 
-        if (check == rcrc)
-        {
-          // Unpack the data to published data type
-          T d;
-          auto data_obj =
-              msgpack::unpack(rdata.data(), rdata.size(), nullptr, nullptr,
-                              detail::unpackLimits());
-          data_obj.get().convert(d);
-          cb(rtopic, d);
-        }
-        else
-        {
-          // Format separately: std::hex is sticky and would leave std::cerr
-          // printing every later integer in hex
-          std::ostringstream ss;
-          ss << std::hex << "Bad checksum: CRC=" << rcrc << " != " << check
-             << "=Check";
-          std::cerr << ss.str() << std::endl;
-        }
+        // Unpack the data to published data type
+        T d;
+        std::get<1>(pubdata).convert(d);
+        cb(rtopic, d);
       }
       catch (const std::exception &e)
       {
