@@ -130,25 +130,9 @@ inline std::string tooLarge(const std::string &what,
 }
 
 /**
- * @brief Limits applied when unpacking data received from a peer
- *
- * MessagePack allocates storage for an array or map as soon as it reads the
- * header, before checking that the elements are present, so a few hostile
- * bytes could otherwise demand gigabytes. Strings and binary data are only
- * copied once their bytes have arrived, so they are bounded by message size.
- *
- * @return msgpack::unpack_limit Limits to pass to msgpack::unpack
+ * @brief Deepest nesting of arrays and maps accepted from a peer
  */
-inline msgpack::unpack_limit unpackLimits()
-{
-  constexpr auto maxBytes = static_cast<std::size_t>(kMaxMessageSize);
-  return msgpack::unpack_limit(/* array */ 1U << 17,
-                               /* map */ 1U << 16,
-                               /* str */ maxBytes,
-                               /* bin */ maxBytes,
-                               /* ext */ maxBytes,
-                               /* depth */ 16);
-}
+inline constexpr std::size_t kMaxDepth = 64;
 
 /**
  * @brief Convert a timeout to 0MQ's form: int milliseconds, -1 = forever.
