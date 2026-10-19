@@ -1,0 +1,105 @@
+@startuml classes
+' Public API of zRPC. Render with: java -jar plantuml.jar -tsvg docs/*.puml
+title zRPC classes
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+hide empty members
+
+namespace zRPC {
+  class Server {
+    +Server(port : uint16_t, nWorkers = 16)
+    +Server(uri : string, nWorkers = 16)
+    +endpoint() : const string&
+    +bind(name : string, func : F)
+    +bind(name : string, method : R (C::*)(A...), object : C*)
+    +rememberCalls(window : milliseconds, maxCalls = 100000)
+    +start()
+    +stop()
+    --
+    -m_rpcs : map<string, function>
+    -m_brokerFrontend : ROUTER
+    -m_brokerBackend : ROUTER
+    -m_th : vector<thread>
+  }
+
+  class Client {
+    +Client(identity : string, uri : string, timeout = 30s)
+    +call(name : string, args... ) : object_handle
+    +call(timeout : milliseconds, name : string, args...) : object_handle
+    +call(id : RequestId, timeout : milliseconds, name : string, args...) : object_handle
+    +setResendInterval(interval : milliseconds)
+    --
+    -m_idle : vector<DEALER>
+    -m_idPrefix : uint64_t
+    -m_nextCall : atomic<uint64_t>
+  }
+
+  class Publisher {
+    +Publisher(port : uint16_t)
+    +Publisher(uri : string)
+    +endpoint() : const string&
+    +publish(topic : string, data : const T&)
+  }
+
+  class Subscriber {
+    +Subscriber()
+    +subscribe<T>(uri : string, topic : string, cb : function<void(const string&, T&)>)
+    --
+    -m_handlers : vector<thread>
+  }
+
+  class RequestId <<struct>> {
+    +bytes : array<uint8_t, 16>
+    +toString() : string
+  }
+
+  class Error <<struct>> {
+    +m_msg : string
+    +m_code : ErrorCode
+  }
+
+  enum ErrorCode {
+    Unknown
+    NotFound
+    InvalidArguments
+    Failed
+    BadRequest
+  }
+
+  class Exception
+  class RemoteError {
+    +error() : const Error&
+    +code() : ErrorCode
+  }
+  class TimeoutError {
+    +requestId() : const RequestId&
+  }
+  class ProtocolError
+
+  enum LogLevel {
+    Warning
+    Error
+  }
+
+  class "setLogHandler(handler : LogHandler) : LogHandler" as setLogHandler << (F,#ADD1B2) function >>
+
+  Exception <|-- RemoteError
+  Exception <|-- TimeoutError
+  Exception <|-- ProtocolError
+  RemoteError *-- Error
+  TimeoutError *-- RequestId
+  Error *-- ErrorCode
+  setLogHandler ..> LogLevel
+
+  Client ..> RequestId : stamps every call
+  Client ..> Server : requests
+  Server ..> Client : replies
+  Publisher ..> Subscriber : publications
+  Client ..> RemoteError : throws
+  Client ..> TimeoutError : throws
+  Client ..> ProtocolError : throws
+}
+
+class "std::runtime_error" as runtime_error
+runtime_error <|-- zRPC.Exception
+@enduml
