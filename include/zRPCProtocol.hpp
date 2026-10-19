@@ -203,16 +203,18 @@ struct Peeked
 };
 
 /**
- * @brief Read the request ID and CRC of an envelope without decoding or
- * validating it
+ * @brief Read the request ID and CRC of an envelope, and check the CRC,
+ * without decoding the envelope
  *
- * Cheap enough for the server's broker thread. The values are only as good
- * as the bytes: open() must still validate the envelope before it is used.
+ * Cheap enough for the server's broker thread, and safe to trust: a message
+ * corrupted in transit cannot lay claim to another call's ID. open() still
+ * has to validate the payload before it is used.
  *
  * @param[in] data Received bytes
  * @param[in] size Number of received bytes
  * @return std::optional<Peeked> The ID and CRC, or nothing if the message
- * does not have sealPayload()'s layout or carries no request ID
+ * does not have sealPayload()'s layout, carries no request ID, or fails its
+ * CRC check
  */
 std::optional<Peeked> peek(const void *data, std::size_t size);
 

@@ -164,7 +164,31 @@ private:
 class TimeoutError : public Exception
 {
 public:
-  using Exception::Exception;
+  /**
+   * @brief Construct a new zRPC::TimeoutError
+   *
+   * @param[in] what Description of the timeout
+   * @param[in] id Request ID of the call that timed out
+   */
+  TimeoutError(const std::string &what, const RequestId &id) :
+      Exception(what),
+      m_id(id)
+  {
+  }
+
+  /**
+   * @brief Request ID of the call that timed out
+   *
+   * The call may or may not have run. Retry it with this ID, using
+   * Client::call(const RequestId &, ...), and it runs at most once.
+   */
+  const RequestId &requestId() const noexcept
+  {
+    return m_id;
+  }
+
+private:
+  RequestId m_id;
 };
 
 /**
@@ -299,6 +323,16 @@ private:
   std::atomic<bool> m_started{false};
 
   /**
+   * @brief How long the broker remembers a finished call's reply
+   */
+  std::chrono::milliseconds m_rememberFor{std::chrono::minutes(5)};
+
+  /**
+   * @brief Most finished calls the broker remembers at once
+   */
+  std::size_t m_maxRemembered{100000};
+
+  /**
    * @brief Worker thread function
    */
   void worker(void);
@@ -384,6 +418,28 @@ public:
    * @endcode
    */
   void stop(void);
+
+  /**
+   * @brief Set how long the server remembers finished calls
+   *
+   * Every call carries a request ID, and a client resends a call it has no
+   * reply to under the same ID. The server runs each ID at most once: a
+   * resend of a running call waits for that run, and a resend of a finished
+   * call gets the stored reply. Finished calls are remembered for `window`;
+   * a resend arriving later, or after the server restarts, runs the call
+   * again.
+   *
+   * Memory grows with the call rate times the window, since each remembered
+   * call keeps its reply. Beyond `maxCalls` the oldest are forgotten early.
+   *
+   * @param[in] window How long to remember a finished call, default 5
+   * minutes. Zero forgets a call as soon as it has replied.
+   * @param[in] maxCalls Most finished calls remembered at once, default
+   * 100,000
+   * @throws std::logic_error if the server has already been started
+   */
+  void rememberCalls(std::chrono::milliseconds window,
+                     std::size_t maxCalls = 100000);
 
   /**
    * @brief Bind a function to an RPC name
@@ -516,6 +572,12 @@ private:
   std::atomic<std::uint64_t> m_nextCall{0};
 
   /**
+   * @brief How often an unanswered call resends its request, in ms; negative
+   * means never
+   */
+  std::atomic<std::int64_t> m_resendMs{1000};
+
+  /**
    * @brief Guards m_idle
    */
   std::mutex m_poolMutex;
@@ -597,8 +659,10 @@ public:
   /**
    * @brief Call the RPC with the given name and given arguments
    *
-   * @note A request that times out may still have reached the server, which
-   * then runs the RPC (with any side effects) and discards the reply.
+   * The call runs at most once on the server, even though an unanswered
+   * request is resent (see setResendInterval()). If it times out it may or
+   * may not have run; zRPC::TimeoutError::requestId() lets you retry it
+   * without risk of running it twice.
    *
    * @code
    * using namespace std::chrono_literals;
@@ -620,6 +684,52 @@ public:
   msgpack::object_handle call(std::chrono::milliseconds timeout,
                               const std::string &name,
                               A... args);
+
+  /**
+   * @brief Retry a call that timed out, without any risk of running it twice
+   *
+   * @code
+   * try
+   * {
+   *   client.call(5s, "startJob", job);
+   * }
+   * catch (const zRPC::TimeoutError &e)
+   * {
+   *   // Runs startJob only if the first attempt never ran it; otherwise
+   *   // returns that attempt's result
+   *   client.call(e.requestId(), 30s, "startJob", job);
+   * }
+   * @endcode
+   *
+   * Pass exactly the same name and arguments as the original call; the
+   * server rejects a request ID reused for a different call. The guarantee
+   * lasts while the server remembers the call (see Server::rememberCalls()).
+   *
+   * @tparam A Variadic argument list
+   * @param[in] id Request ID from zRPC::TimeoutError::requestId()
+   * @param[in] timeout Time to wait for the reply, or zRPC::kWaitForever
+   * @param[in] name Name of the RPC to call on the remote server
+   * @param[in] args Variadic argument list to pass to the remote server
+   * @return msgpack::object_handle Value returned by the RPC
+   * @throws as call(std::chrono::milliseconds, const std::string &, A...)
+   */
+  template <typename... A>
+  msgpack::object_handle call(const RequestId &id,
+                              std::chrono::milliseconds timeout,
+                              const std::string &name,
+                              A... args);
+
+  /**
+   * @brief Set how often a call without a reply resends its request
+   *
+   * A resend carries the same request ID, so the server still runs the call
+   * at most once (see Server::rememberCalls()). Resends recover a request
+   * lost with a broken connection, e.g. when the server restarts. Default 1
+   * second; zRPC::kWaitForever disables them.
+   *
+   * @param[in] interval Time between sends of an unanswered request
+   */
+  void setResendInterval(std::chrono::milliseconds interval);
 
   /**
    * @brief Deleted: pass the timeout as a std::chrono duration, e.g. 500ms

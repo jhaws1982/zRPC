@@ -45,4 +45,17 @@ msgpack::object_handle Client::call(std::chrono::milliseconds timeout,
       std::forward_as_tuple(name, std::forward_as_tuple(args...)), id);
   return exchange(id, request, name, timeout);
 }
+
+template <typename... A>
+msgpack::object_handle Client::call(const RequestId &id,
+                                    std::chrono::milliseconds timeout,
+                                    const std::string &name,
+                                    A... args)
+{
+  // Same ID, same bytes: the server recognises the call
+  const auto request = detail::seal(
+      detail::Status::Ok,
+      std::forward_as_tuple(name, std::forward_as_tuple(args...)), id);
+  return exchange(id, request, name, timeout);
+}
 }  // namespace zRPC

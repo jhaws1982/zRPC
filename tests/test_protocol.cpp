@@ -118,6 +118,19 @@ TEST(Envelope, CarriesRequestIdsThatPeekCanRead)
   EXPECT_NE(peek(other.data(), other.size())->crc, peeked->crc);
 }
 
+TEST(Envelope, PeekHandlesEveryPayloadSize)
+{
+  // bin8, bin16 and bin32 payloads
+  for (const std::size_t n : {0U, 200U, 300U, 70000U})
+  {
+    const auto sealed = bytes(seal(Status::Ok, std::string(n, 'x'), someId()));
+    const auto peeked = peek(sealed.data(), sealed.size());
+    ASSERT_TRUE(peeked) << n;
+    EXPECT_EQ(peeked->id, someId());
+    EXPECT_FALSE(peek(sealed.data(), sealed.size() - 1)) << n;
+  }
+}
+
 TEST(Envelope, PublicationsAndGarbageHaveNoRequestId)
 {
   const auto pub = bytes(seal(Status::Ok, 42));
@@ -146,6 +159,8 @@ TEST(Envelope, DetectsEverySingleBitFlip)
         auto corrupt = sealed;
         corrupt[i] = static_cast<char>(corrupt[i] ^ (1 << bit));
         EXPECT_THROW(open(corrupt.data(), corrupt.size()), ProtocolError)
+            << "byte " << i << " bit " << bit;
+        EXPECT_FALSE(peek(corrupt.data(), corrupt.size()))
             << "byte " << i << " bit " << bit;
       }
     }
