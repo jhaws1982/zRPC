@@ -28,10 +28,14 @@
 #ifndef ZRPC_PROTOCOL_HPP_
 #define ZRPC_PROTOCOL_HPP_
 
+#include <array>
 #include <chrono>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <optional>
+#include <string>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wsign-conversion"
@@ -40,8 +44,42 @@
 
 namespace zRPC
 {
+/**
+ * @brief Identifies one call. Every resend of a call carries the same ID, so
+ * the server can recognise it.
+ */
+struct RequestId
+{
+  /**
+   * @brief 128 bits: a random per-Client prefix and a per-call counter
+   */
+  std::array<std::uint8_t, 16> bytes{};
+
+  bool operator==(const RequestId &) const = default;
+
+  /**
+   * @brief The ID as 32 hexadecimal digits
+   */
+  std::string toString() const;
+};
+
 namespace detail
 {
+/**
+ * @brief Hash of a RequestId, for unordered containers
+ */
+struct RequestIdHash
+{
+  std::size_t operator()(const RequestId &id) const noexcept
+  {
+    std::uint64_t prefix = 0;
+    std::uint64_t counter = 0;
+    std::memcpy(&prefix, id.bytes.data(), sizeof(prefix));
+    std::memcpy(&counter, id.bytes.data() + sizeof(prefix), sizeof(counter));
+    return static_cast<std::size_t>(prefix ^ (counter * 0x9E3779B97F4A7C15ULL));
+  }
+};
+
 /**
  * @brief Whether an envelope carries a value or a zRPC::Error
  */
@@ -109,15 +147,25 @@ std::uint32_t crc32(const void *data, std::size_t size);
  * @brief Wrap an already packed payload in an envelope
  *
  * Every request, reply and publication is one MessagePack array
- * `[version, status, payload, crc32]`, where `payload` is the packed body as
- * binary data and `crc32` (CRC-32/ISO-HDLC) covers the version byte, the
- * status byte and the payload bytes.
+ * `[version, status, id, payload, crc32]`:
+ * - `id` is the request ID as 16 bytes of binary data in requests and their
+ *   replies, and empty in publications;
+ * - `payload` is the packed body as binary data;
+ * - `crc32` (CRC-32/ISO-HDLC) covers the version, status, id and payload
+ *   bytes.
+ *
+ * The fields before the payload, and the CRC, always use the same encoding
+ * (uint8, uint8, bin8, ..., uint32), so peek() can read the ID and CRC at
+ * fixed offsets without decoding the message.
  *
  * @param[in] status Whether the payload is a value or a zRPC::Error
  * @param[in] payload Packed body
+ * @param[in] id Request ID, if the envelope is a request or a reply
  * @return msgpack::sbuffer Envelope ready to send
  */
-msgpack::sbuffer sealPayload(Status status, const msgpack::sbuffer &payload);
+msgpack::sbuffer sealPayload(Status status,
+                             const msgpack::sbuffer &payload,
+                             const std::optional<RequestId> &id = std::nullopt);
 
 /**
  * @brief Pack a body and wrap it in an envelope
@@ -125,15 +173,48 @@ msgpack::sbuffer sealPayload(Status status, const msgpack::sbuffer &payload);
  * @tparam T MessagePack-able body type
  * @param[in] status Whether the body is a value or a zRPC::Error
  * @param[in] body Body to send
+ * @param[in] id Request ID, if the envelope is a request or a reply
  * @return msgpack::sbuffer Envelope ready to send
  */
 template <class T>
-msgpack::sbuffer seal(Status status, const T &body)
+msgpack::sbuffer seal(Status status,
+                      const T &body,
+                      const std::optional<RequestId> &id = std::nullopt)
 {
   msgpack::sbuffer payload;
   msgpack::pack(payload, body);
-  return sealPayload(status, payload);
+  return sealPayload(status, payload, id);
 }
+
+/**
+ * @brief The fields of an envelope that can be read without decoding it
+ */
+struct Peeked
+{
+  /**
+   * @brief Request ID
+   */
+  RequestId id;
+
+  /**
+   * @brief The envelope's CRC, which identifies its exact contents
+   */
+  std::uint32_t crc{0};
+};
+
+/**
+ * @brief Read the request ID and CRC of an envelope without decoding or
+ * validating it
+ *
+ * Cheap enough for the server's broker thread. The values are only as good
+ * as the bytes: open() must still validate the envelope before it is used.
+ *
+ * @param[in] data Received bytes
+ * @param[in] size Number of received bytes
+ * @return std::optional<Peeked> The ID and CRC, or nothing if the message
+ * does not have sealPayload()'s layout or carries no request ID
+ */
+std::optional<Peeked> peek(const void *data, std::size_t size);
 
 /**
  * @brief Contents of a validated envelope
@@ -144,6 +225,11 @@ struct Opened
    * @brief Whether the body is a value or a zRPC::Error
    */
   Status status{Status::Ok};
+
+  /**
+   * @brief Request ID, for requests and their replies
+   */
+  std::optional<RequestId> id;
 
   /**
    * @brief Unpacked body. It owns its memory, so it stays valid after the

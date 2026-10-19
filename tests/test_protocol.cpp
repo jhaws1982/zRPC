@@ -30,7 +30,9 @@
 
 using namespace zrpc_test;
 using zRPC::ProtocolError;
+using zRPC::RequestId;
 using zRPC::detail::open;
+using zRPC::detail::peek;
 using zRPC::detail::seal;
 using zRPC::detail::sealPayload;
 using zRPC::detail::Status;
@@ -76,11 +78,67 @@ TEST(Envelope, BodyOutlivesTheReceivedBytes)
   EXPECT_EQ(kept.get().as<Msg>(), (Msg{7, std::string(300, 'x')}));
 }
 
+namespace
+{
+RequestId someId()
+{
+  RequestId id;
+  for (std::size_t i = 0; i < id.bytes.size(); ++i)
+  {
+    id.bytes[i] = static_cast<std::uint8_t>(0xA0 + i);
+  }
+  return id;
+}
+}  // namespace
+
+TEST(Envelope, CarriesRequestIdsThatPeekCanRead)
+{
+  const auto id = someId();
+  const auto sealed = bytes(seal(Status::Ok, 42, id));
+
+  auto opened = open(sealed.data(), sealed.size());
+  ASSERT_TRUE(opened.id);
+  EXPECT_EQ(*opened.id, id);
+  EXPECT_EQ(opened.body.get().as<int>(), 42);
+
+  const auto peeked = peek(sealed.data(), sealed.size());
+  ASSERT_TRUE(peeked);
+  EXPECT_EQ(peeked->id, id);
+  // The CRC is the last four bytes, big-endian
+  const auto *tail =
+      reinterpret_cast<const std::uint8_t *>(sealed.data() + sealed.size() - 4);
+  EXPECT_EQ(peeked->crc, (std::uint32_t{tail[0]} << 24) |
+                             (std::uint32_t{tail[1]} << 16) |
+                             (std::uint32_t{tail[2]} << 8) | tail[3]);
+
+  // Identical calls have identical CRCs; a different call does not
+  EXPECT_EQ(peek(sealed.data(), sealed.size())->crc,
+            peek(bytes(seal(Status::Ok, 42, id)).data(), sealed.size())->crc);
+  const auto other = bytes(seal(Status::Ok, 43, id));
+  EXPECT_NE(peek(other.data(), other.size())->crc, peeked->crc);
+}
+
+TEST(Envelope, PublicationsAndGarbageHaveNoRequestId)
+{
+  const auto pub = bytes(seal(Status::Ok, 42));
+  EXPECT_FALSE(open(pub.data(), pub.size()).id);
+  EXPECT_FALSE(peek(pub.data(), pub.size()));
+
+  const std::string garbage = "hello, not msgpack at all, not even close";
+  EXPECT_FALSE(peek(garbage.data(), garbage.size()));
+  EXPECT_FALSE(peek(garbage.data(), 3));
+}
+
+TEST(Envelope, RequestIdPrintsAsHex)
+{
+  EXPECT_EQ(someId().toString(), "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf");
+}
+
 TEST(Envelope, DetectsEverySingleBitFlip)
 {
   for (const auto status : {Status::Ok, Status::Error})
   {
-    const auto sealed = bytes(seal(status, Msg{1, "hello"}));
+    const auto sealed = bytes(seal(status, Msg{1, "hello"}, someId()));
     for (std::size_t i = 0; i < sealed.size(); ++i)
     {
       for (int bit = 0; bit < 8; ++bit)
@@ -111,13 +169,14 @@ TEST(Envelope, RejectsMalformedInput)
 
 TEST(Envelope, RejectsOtherWireVersionsAndStatuses)
 {
+  // [fixarray][uint8 marker][version][uint8 marker][status]...
   auto sealed = bytes(seal(Status::Ok, 1));
-  // [fixarray header][version][status]...
-  sealed[1] = static_cast<char>(zRPC::detail::kWireVersion + 1);
+  sealed[2] = static_cast<char>(zRPC::detail::kWireVersion + 1);
   EXPECT_THROW(open(sealed.data(), sealed.size()), ProtocolError);
+  EXPECT_FALSE(peek(sealed.data(), sealed.size()));
 
   sealed = bytes(seal(Status::Ok, 1));
-  sealed[2] = 9;
+  sealed[4] = 9;
   EXPECT_THROW(open(sealed.data(), sealed.size()), ProtocolError);
 }
 

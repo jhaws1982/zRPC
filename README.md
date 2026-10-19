@@ -111,7 +111,8 @@ and arm64 packages for every release.
   `client.call(500ms, "add", 2, 3)`, or `zRPC::kWaitForever` to wait
   indefinitely. A call that times out may still run on the server.
 - Every request, reply and publication is a CRC-32 protected envelope
-  `[version, status, payload, crc]`. The CRC detects accidental corruption,
+  `[version, status, request id, payload, crc]`; replies echo the request's
+  ID. The CRC detects accidental corruption,
   not tampering; use 0MQ CURVE security on untrusted networks.
 - zRPC never writes to stdout. Problems on its own threads (a dropped
   publication, a subscription callback that throws, a server thread that

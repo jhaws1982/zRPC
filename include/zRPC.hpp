@@ -504,6 +504,22 @@ private:
    */
   std::chrono::milliseconds m_timeout;
 
+  /**
+   * @brief Random first half of this client's request IDs, so that IDs from
+   * different clients and processes do not collide
+   */
+  std::uint64_t m_idPrefix;
+
+  /**
+   * @brief Second half of the next request ID
+   */
+  std::atomic<std::uint64_t> m_nextCall{0};
+
+  /**
+   * @brief A request ID no other call has used
+   */
+  RequestId newRequestId(void);
+
 public:
   /**
    * @brief Construct a new zRPC::Client object
