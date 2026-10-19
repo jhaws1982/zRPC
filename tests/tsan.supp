@@ -1,0 +1,6 @@
+# ThreadSanitizer suppressions for the unit tests.
+#
+# libzmq is not built with TSan, so its own synchronisation is invisible and
+# its calls into intercepted functions (epoll, recv, memcpy, ...) produce false
+# reports. zRPC's own code is still fully checked.
+called_from_lib:libzmq.so

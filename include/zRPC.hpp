@@ -215,6 +215,11 @@ private:
   zmq::socket_t m_brokerBackend;
 
   /**
+   * @brief Endpoint the front-end socket is bound to
+   */
+  std::string m_endpoint;
+
+  /**
    * @brief Vector of thread handler for main worker threads
    */
   std::vector<std::thread> m_th;
@@ -292,6 +297,12 @@ public:
   explicit Server(const std::string &uri, const uint32_t nWorkers = 16U);
 
   ~Server();
+
+  /**
+   * @brief Endpoint the server is listening on, with a wildcard port
+   * resolved, e.g. "tcp://127.0.0.1:41234" after binding "tcp://127.0.0.1:*"
+   */
+  const std::string &endpoint(void) const noexcept;
 
   /**
    * @brief Start the worker threads and run the broker that hands client
@@ -518,6 +529,11 @@ private:
   zmq::socket_t m_pub;
 
   /**
+   * @brief Endpoint the publisher socket is bound to
+   */
+  std::string m_endpoint;
+
+  /**
    * @brief Serialises use of the publisher socket, which 0MQ does not allow
    * from several threads at once
    */
@@ -541,6 +557,12 @@ public:
    * @throws zmq::error_t if the URI is invalid or cannot be bound
    */
   explicit Publisher(const std::string &uri);
+
+  /**
+   * @brief Endpoint the publisher is listening on, with a wildcard port
+   * resolved, e.g. "tcp://127.0.0.1:41234" after binding "tcp://127.0.0.1:*"
+   */
+  const std::string &endpoint(void) const noexcept;
 
   /**
    * @brief Publish a MessagePack-able object using the given topic name

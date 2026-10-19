@@ -19,13 +19,16 @@ else()
   set(ZRPC_TOP_LEVEL OFF)
 endif()
 
-option(ZRPC_BUILD_TESTS "Enable build of unit test applications" ${ZRPC_TOP_LEVEL})
+option(ZRPC_BUILD_TESTS "Build the unit tests (GoogleTest)" ${ZRPC_TOP_LEVEL})
+option(ZRPC_BUILD_EXAMPLES "Build the example programs" ${ZRPC_TOP_LEVEL})
 option(ZRPC_INSTALL "Generate install and package rules" ${ZRPC_TOP_LEVEL})
 option(ZRPC_FETCH_DEPS
        "Download cppzmq and msgpack-cxx with CPM when they are not installed" ON)
 option(ZRPC_ENABLE_COVERAGE "Instrument zRPC and its tests for coverage" OFF)
 option(ZRPC_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${ZRPC_TOP_LEVEL})
 option(BUILD_SHARED_LIBS "Build zRPC as a shared library" ON)
+set(ZRPC_SANITIZERS "" CACHE STRING
+    "Sanitizers for zRPC, its tests and fetched dependencies, e.g. address,undefined or thread")
 
 include(GNUInstallDirs)
 
@@ -47,6 +50,11 @@ if(ZRPC_WARNINGS_AS_ERRORS)
   list(APPEND zrpc_warnings -pedantic-errors -Werror)
 endif()
 
+if(ZRPC_SANITIZERS)
+  add_compile_options(-fsanitize=${ZRPC_SANITIZERS} -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=${ZRPC_SANITIZERS})
+endif()
+
 ###############################################################################
 # Dependencies
 #  - libzmq must be installed (it is in every distribution)
@@ -57,8 +65,11 @@ endif()
 find_package(Threads REQUIRED)
 
 if(ZRPC_FETCH_DEPS)
+  # Prefer installed copies. -DCPM_USE_LOCAL_PACKAGES=OFF forces downloads,
+  # e.g. to build GoogleTest with the same sanitizer flags as the tests.
+  set(CPM_USE_LOCAL_PACKAGES ON CACHE BOOL
+      "Try find_package() before downloading a dependency")
   include(cmake/CPM.cmake)
-  set(CPM_USE_LOCAL_PACKAGES ON)
 
   CPMAddPackage(
     NAME cppzmq
@@ -86,6 +97,13 @@ if(ZRPC_ENABLE_COVERAGE)
   # Instruments every target in this directory: the library and its tests
   include(cmake/CodeCoverage.cmake)
   append_coverage_compiler_flags()
+  # The tests are multithreaded; non-atomic counters lose updates and gcov
+  # then reports negative hit counts
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag(-fprofile-update=atomic ZRPC_HAVE_PROFILE_UPDATE_ATOMIC)
+  if(ZRPC_HAVE_PROFILE_UPDATE_ATOMIC)
+    add_compile_options(-fprofile-update=atomic)
+  endif()
 endif()
 
 ###############################################################################
@@ -123,28 +141,63 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 )
 
 ###############################################################################
-# Test applications
+# Examples
+###############################################################################
+if(ZRPC_BUILD_EXAMPLES)
+  foreach(app client clientDetached server publisher subscriber)
+    add_executable(${app} examples/${app}.cpp)
+    target_link_libraries(${app} PRIVATE ${PROJECT_NAME}::${PROJECT_NAME})
+    target_compile_options(${app} PRIVATE ${zrpc_warnings})
+  endforeach()
+endif()
+
+###############################################################################
+# Unit tests
 ###############################################################################
 if(ZRPC_BUILD_TESTS)
   enable_testing()
 
-  foreach(app client clientDetached server publisher subscriber)
-    add_executable(${app} tests/${app}.cpp)
-    target_link_libraries(${app} PRIVATE ${PROJECT_NAME}::${PROJECT_NAME})
-    target_compile_options(${app} PRIVATE ${zrpc_warnings})
-  endforeach()
+  if(ZRPC_FETCH_DEPS)
+    CPMAddPackage(
+      NAME GTest
+      VERSION 1.14.0
+      GIT_TAG v1.17.0
+      GITHUB_REPOSITORY "google/googletest"
+      OPTIONS "INSTALL_GTEST OFF" "BUILD_GMOCK OFF"
+      SYSTEM YES
+    )
+  else()
+    find_package(GTest 1.14.0 REQUIRED)
+  endif()
 
-  add_executable(unittest tests/unit.cpp)
-  target_link_libraries(unittest PRIVATE ${PROJECT_NAME}::${PROJECT_NAME})
-  target_compile_options(unittest PRIVATE ${zrpc_warnings})
-  add_test(NAME unittest COMMAND unittest)
+  add_executable(zrpc_tests tests/test_protocol.cpp
+                            tests/test_pubsub.cpp
+                            tests/test_rpc.cpp
+                )
+  target_link_libraries(zrpc_tests PRIVATE ${PROJECT_NAME}::${PROJECT_NAME}
+                                           GTest::gtest_main)
+  target_compile_options(zrpc_tests PRIVATE ${zrpc_warnings})
+
+  # List the tests when ctest runs, in the test environment, rather than by
+  # running the binary during the build (which fails for sanitizer and cross
+  # builds)
+  set(zrpc_discovery_mode)
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.18)
+    set(zrpc_discovery_mode DISCOVERY_MODE PRE_TEST)
+  endif()
+  include(GoogleTest)
+  gtest_discover_tests(zrpc_tests
+                       ${zrpc_discovery_mode}
+                       DISCOVERY_TIMEOUT 60
+                       PROPERTIES TIMEOUT 120
+                      )
 
   if(ZRPC_ENABLE_COVERAGE)
     setup_target_for_coverage_gcovr_xml(NAME ${PROJECT_NAME}_coverage
-                                        EXECUTABLE unittest
-                                        DEPENDENCIES unittest
+                                        EXECUTABLE ctest --output-on-failure
+                                        DEPENDENCIES zrpc_tests
                                         BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-                                        EXCLUDE "tests"
+                                        EXCLUDE "tests" "examples"
                                        )
   endif()
 endif()

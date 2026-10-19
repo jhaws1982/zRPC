@@ -39,12 +39,29 @@ ctest --test-dir build
 | Option                    | Default     | Effect                                                     |
 | ------------------------- | ----------- | ---------------------------------------------------------- |
 | `ZRPC_FETCH_DEPS`         | `ON`        | Download cppzmq/msgpack-cxx with CPM when not installed     |
-| `ZRPC_BUILD_TESTS`        | top level   | Build the tests and examples                               |
+| `ZRPC_BUILD_TESTS`        | top level   | Build the unit tests (GoogleTest)                          |
+| `ZRPC_BUILD_EXAMPLES`     | top level   | Build the example programs in `examples/`                  |
+| `ZRPC_SANITIZERS`         | (none)      | e.g. `address,undefined` or `thread`                       |
 | `ZRPC_INSTALL`            | top level   | Generate install and CPack rules                           |
 | `ZRPC_WARNINGS_AS_ERRORS` | top level   | Add `-Werror` to zRPC's own targets (never to consumers)   |
 | `ZRPC_ENABLE_COVERAGE`    | `OFF`       | Instrument for coverage; adds the `zRPC_coverage` target   |
 | `BUILD_SHARED_LIBS`       | `ON`        | Build a shared (`ON`) or static (`OFF`) library            |
 | `ZRPC_PACKAGE_ARCH`       | build host  | Package architecture for cross builds, e.g. `arm64`        |
+
+## Testing
+The unit tests use GoogleTest (found on the system, or downloaded). They bind
+ephemeral ports, so they can run in parallel:
+```sh
+ctest --test-dir build --output-on-failure --parallel 4
+```
+To run them under sanitizers, configure with e.g.
+`-DZRPC_SANITIZERS=address,undefined` or `-DZRPC_SANITIZERS=thread`, plus
+`-DCPM_USE_LOCAL_PACKAGES=OFF` so GoogleTest is built with the same flags. For
+ThreadSanitizer set `TSAN_OPTIONS=suppressions=$PWD/tests/tsan.supp` (libzmq is
+not instrumented). With `-DZRPC_ENABLE_COVERAGE=ON`, the `zRPC_coverage`
+target writes `test-reports/zRPC_coverage.xml`.
+
+The programs in `examples/` show a client, server, publisher and subscriber.
 
 ## Using zRPC in another project
 After `cmake --install build` (or installing the `libzrpc-dev` package):
@@ -97,13 +114,8 @@ and arm64 packages for every release.
   `srv.bind("terminate", [&srv]() { srv.stop(); });`
 
 ## TODO
-- Unit testing from the beginning - basic client/server, all ctors, move/copy
-  - Add gtest suite as testing dependency
-  - Write unit test to ensure that all workers are used and client blocks until free worker then continues
-  - Tie into codecov.io
-- RPC client/server plus generic class/event publisher
-  - Easy way to publish generic events as passed in
-  - Easy way to subscribe to generic events and receive callback when received (how to include generic data?)
+- Subscribe to generic (untyped) data, e.g. by receiving a
+  `msgpack::object_handle` instead of a fixed type
 - PlantUML class diagrams
 
 ## BUGS
