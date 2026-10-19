@@ -25,6 +25,7 @@
  * SOFTWARE.
  */
 
+#include <sstream>
 #include "zRPC.hpp"
 
 using namespace zRPC;
@@ -109,8 +110,12 @@ void Subscriber::handler(const std::string &uri,
         }
         else
         {
-          std::cerr << std::hex << "Bad checksum: CRC=" << rcrc
-                    << " != " << check << "=Check" << std::endl;
+          // Format separately: std::hex is sticky and would leave std::cerr
+          // printing every later integer in hex
+          std::ostringstream ss;
+          ss << std::hex << "Bad checksum: CRC=" << rcrc << " != " << check
+             << "=Check";
+          std::cerr << ss.str() << std::endl;
         }
       }
       catch (const std::exception &e)
