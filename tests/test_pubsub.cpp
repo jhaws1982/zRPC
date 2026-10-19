@@ -207,6 +207,18 @@ TEST(PubSub, DeliversTypedData)
   EXPECT_EQ(got.topics(), std::set<std::string>{"msg"});
 }
 
+TEST(PubSub, DeliversLargeArrays)
+{
+  zRPC::Publisher pub("tcp://127.0.0.1:*");
+  Received<std::vector<int>> got;
+  zRPC::Subscriber sub;
+  sub.subscribe<std::vector<int>>(pub.endpoint(), "v", got.callback());
+
+  const std::vector<int> samples(200000, 3);
+  ASSERT_TRUE(publishUntil(pub, "v", samples, got));
+  EXPECT_EQ(got.values().front(), samples);
+}
+
 TEST(PubSub, TopicsMatchExactlyNotByPrefix)
 {
   zRPC::Publisher pub("tcp://127.0.0.1:*");

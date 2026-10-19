@@ -262,6 +262,18 @@ protected:
     m_srv.bind("boom", &boom);
     m_srv.bind("sleep", &sleepFor);
     m_srv.bind("blob", [](std::size_t n) { return std::string(n, 'x'); });
+    m_srv.bind("samples",
+               [](std::size_t n) { return std::vector<double>(n, 0.5); });
+    m_srv.bind("sum",
+               [](const std::vector<double> &v)
+               {
+                 double total = 0;
+                 for (double x : v)
+                 {
+                   total += x;
+                 }
+                 return total;
+               });
     m_srv.bind("mul", [](double a, double b) { return a * b; });
     m_srv.bind("greet", [](const std::string &who) { return "hello " + who; });
     m_srv.bind("count", Counter{});
@@ -309,6 +321,16 @@ TEST_F(Rpc, BindsMemberFunctionsOfAnObject)
   EXPECT_EQ(m_client.call("calcGet").get().as<int>(), 100);
   EXPECT_EQ(m_client.call("calcGetConst").get().as<int>(), 7);
   EXPECT_EQ(m_client.call("calcAddNoexcept", 5).get().as<int>(), 106);
+}
+
+TEST_F(Rpc, LargeArraysTravelBothWays)
+{
+  // 200,000 samples is about 1.8 MB, far below the message size limit
+  const auto samples = m_client.call("samples", std::size_t{200000})
+                           .get()
+                           .as<std::vector<double>>();
+  ASSERT_EQ(samples.size(), 200000U);
+  EXPECT_DOUBLE_EQ(m_client.call("sum", samples).get().as<double>(), 100000.0);
 }
 
 TEST_F(Rpc, VoidFunctionReturnsNil)

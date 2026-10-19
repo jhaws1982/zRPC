@@ -27,6 +27,7 @@
 
 #include <array>
 #include <cstring>
+#include <stdexcept>
 #include "zRPC.hpp"
 
 namespace zRPC
@@ -65,6 +66,112 @@ constexpr std::size_t kIdOffset = 1 + 2 + 2 + 2;
  * @brief Size of the encoded CRC at the end of an envelope
  */
 constexpr std::size_t kCrcSize = 1 + 4;
+
+/**
+ * @brief Walks a MessagePack message without building it, checking the
+ * element counts that its array and map headers claim
+ *
+ * MessagePack allocates storage for an array or map as soon as it reads the
+ * header, before the elements arrive, so a few hostile bytes claiming
+ * billions of elements would demand gigabytes. But every element takes at
+ * least one byte, so the claims of a genuine message add up to no more than
+ * its size. Checking that bound first lets any genuine message under
+ * kMaxMessageSize through, however many elements it has, while a hostile
+ * claim is caught before anything is allocated.
+ */
+class ClaimCheck : public msgpack::null_visitor
+{
+public:
+  explicit ClaimCheck(std::size_t size) : m_budget(size)
+  {
+  }
+
+  bool start_array(std::uint32_t elements)
+  {
+    return claim(elements) && enter();
+  }
+
+  bool end_array()
+  {
+    --m_depth;
+    return true;
+  }
+
+  bool start_map(std::uint32_t entries)
+  {
+    return claim(2 * std::uint64_t{entries}) && enter();
+  }
+
+  bool end_map()
+  {
+    --m_depth;
+    return true;
+  }
+
+  /**
+   * @brief Whether the walk stopped because of a claim or the nesting depth
+   * (rather than because the message is truncated or not MessagePack)
+   */
+  bool exceeded() const
+  {
+    return m_exceeded;
+  }
+
+private:
+  bool claim(std::uint64_t elements)
+  {
+    if (elements > m_budget)
+    {
+      m_exceeded = true;
+      return false;
+    }
+    m_budget -= elements;
+    return true;
+  }
+
+  bool enter()
+  {
+    if (++m_depth > kMaxDepth)
+    {
+      m_exceeded = true;
+      return false;
+    }
+    return true;
+  }
+
+  std::uint64_t m_budget;
+  std::size_t m_depth{0};
+  bool m_exceeded{false};
+};
+
+/**
+ * @brief Decode MessagePack received from a peer, after ClaimCheck has shown
+ * that it cannot make msgpack allocate more than its size warrants
+ *
+ * @param[in] data Received bytes
+ * @param[in] size Number of bytes
+ * @return msgpack::object_handle Decoded object, owning its memory
+ * @throws std::exception describing why the bytes cannot be decoded
+ */
+msgpack::object_handle unpackFromPeer(const char *data, std::size_t size)
+{
+  ClaimCheck check(size);
+  if (!msgpack::parse(data, size, check))
+  {
+    throw std::runtime_error(
+        check.exceeded() ? "it claims more elements than it holds, or nests "
+                           "more than " +
+                               std::to_string(kMaxDepth) + " levels deep" :
+                           "it is truncated or not MessagePack");
+  }
+
+  // Without a reference callback, unpack copies strings and binary data into
+  // the handle's zone, so the result does not point into `data`. The limits
+  // repeat the bounds ClaimCheck has just verified.
+  return msgpack::unpack(
+      data, size, nullptr, nullptr,
+      msgpack::unpack_limit(size, size, size, size, size, kMaxDepth));
+}
 
 /**
  * @brief Build the lookup table for CRC-32/ISO-HDLC (reflected polynomial
@@ -235,8 +342,7 @@ Opened open(const void *data, std::size_t size)
   msgpack::object_handle envelope;
   try
   {
-    envelope = msgpack::unpack(static_cast<const char *>(data), size, nullptr,
-                               nullptr, unpackLimits());
+    envelope = unpackFromPeer(static_cast<const char *>(data), size);
   }
   catch (const std::exception &e)
   {
@@ -293,10 +399,8 @@ Opened open(const void *data, std::size_t size)
   }
   try
   {
-    // Without a reference callback, unpack copies strings and binary data
-    // into the new handle's zone, so the body does not point into `data`
-    opened.body = msgpack::unpack(payload.ptr, payload.size, nullptr, nullptr,
-                                  unpackLimits());
+    // Copied out of `data`, so the body outlives the received message
+    opened.body = unpackFromPeer(payload.ptr, payload.size);
   }
   catch (const std::exception &e)
   {

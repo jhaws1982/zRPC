@@ -26,6 +26,7 @@
  */
 
 #include <algorithm>
+#include <map>
 #include "helpers.hpp"
 
 using namespace zrpc_test;
@@ -192,6 +193,70 @@ TEST(Envelope, RejectsOtherWireVersionsAndStatuses)
 
   sealed = bytes(seal(Status::Ok, 1));
   sealed[4] = 9;
+  EXPECT_THROW(open(sealed.data(), sealed.size()), ProtocolError);
+}
+
+TEST(Envelope, DecodesLargeArraysMapsAndDeepNesting)
+{
+  // Ordinary data with many elements, far below the message size limit
+  const std::vector<int> samples(300000, 7);
+  auto sealed = seal(Status::Ok, samples);
+  EXPECT_EQ(
+      open(sealed.data(), sealed.size()).body.get().as<std::vector<int>>(),
+      samples);
+
+  std::map<int, int> table;
+  for (int i = 0; i < 100000; ++i)
+  {
+    table[i] = -i;
+  }
+  sealed = seal(Status::Ok, table);
+  EXPECT_EQ(
+      (open(sealed.data(), sealed.size()).body.get().as<std::map<int, int>>()),
+      table);
+
+  // 40 levels of nested arrays around a single value
+  msgpack::sbuffer nested;
+  msgpack::packer<msgpack::sbuffer> pk(nested);
+  for (int i = 0; i < 40; ++i)
+  {
+    pk.pack_array(1);
+  }
+  pk.pack_int(1);
+  sealed = sealPayload(Status::Ok, nested);
+  EXPECT_NO_THROW(open(sealed.data(), sealed.size()));
+}
+
+TEST(Envelope, RejectsClaimsLargerThanTheMessageAndExcessiveNesting)
+{
+  // Arrays nested inside each other, each claiming far more elements than
+  // the whole message holds
+  msgpack::sbuffer claims;
+  msgpack::packer<msgpack::sbuffer> pk(claims);
+  for (int i = 0; i < 16; ++i)
+  {
+    pk.pack_array(0x7FFFFFFFU);
+  }
+  auto sealed = bytes(sealPayload(Status::Ok, claims));
+  EXPECT_THROW(open(sealed.data(), sealed.size()), ProtocolError);
+
+  // A map claiming more entries than there are bytes
+  msgpack::sbuffer map;
+  msgpack::packer<msgpack::sbuffer> mp(map);
+  mp.pack_map(1000);
+  mp.pack_int(1);
+  sealed = bytes(sealPayload(Status::Ok, map));
+  EXPECT_THROW(open(sealed.data(), sealed.size()), ProtocolError);
+
+  // Deeper than kMaxDepth
+  msgpack::sbuffer deep;
+  msgpack::packer<msgpack::sbuffer> dp(deep);
+  for (std::size_t i = 0; i <= zRPC::detail::kMaxDepth; ++i)
+  {
+    dp.pack_array(1);
+  }
+  dp.pack_int(1);
+  sealed = bytes(sealPayload(Status::Ok, deep));
   EXPECT_THROW(open(sealed.data(), sealed.size()), ProtocolError);
 }
 
