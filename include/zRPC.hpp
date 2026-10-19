@@ -243,7 +243,7 @@ using LogHandler =
  * and workers, and subscriptions), where there is no caller to throw to.
  * Everything else is reported by exceptions. By default messages go to
  * std::cerr; an empty handler discards them. The handler may be called from
- * several threads at once.
+ * several threads at once. Anything it throws is caught and ignored.
  *
  * @param[in] handler New handler
  * @return LogHandler The previous handler, e.g. to restore later

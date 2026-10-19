@@ -79,7 +79,16 @@ void log(LogLevel level, const std::string &message)
   // Called outside the lock, so a handler may itself call setLogHandler()
   if (handler)
   {
-    handler(level, message);
+    try
+    {
+      handler(level, message);
+    }
+    catch (...)
+    {
+      // There is nowhere left to report this, and logging must never fail
+      // the operation that triggered it: a subscription thread or the
+      // server's broker would otherwise end, or the process terminate
+    }
   }
 }
 }  // namespace detail
