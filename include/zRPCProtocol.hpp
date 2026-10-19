@@ -82,6 +82,15 @@ inline msgpack::unpack_limit unpackLimits()
 }
 
 /**
+ * @brief CRC-32/ISO-HDLC of a block of bytes (check value 0xCBF43926)
+ *
+ * @param[in] data Bytes to checksum
+ * @param[in] size Number of bytes
+ * @return std::uint32_t CRC-32 of the bytes
+ */
+std::uint32_t crc32(const void *data, std::size_t size);
+
+/**
  * @brief Wrap an already packed payload in an envelope
  *
  * Every request, reply and publication is one MessagePack array

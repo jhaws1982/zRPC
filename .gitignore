@@ -1,5 +1,6 @@
-# Build folder
+# Build folders
 _bld
+build/
 
 # Coverage tests
 test-reports

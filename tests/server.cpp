@@ -76,7 +76,6 @@ int main(void)
   zRPC::Server srv(12345, 4);
   std::cout << "Starting zRPC server!" << std::endl;
 
-  Message m;
   srv.bind("f1", &f1);
   srv.bind("f2", &f2);
   srv.bind("f3", &f3);

@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+find_dependency(cppzmq 4.8.1)
+find_dependency(msgpack-cxx 6.0.0)
+
+include("${CMAKE_CURRENT_LIST_DIR}/zRPCTargets.cmake")
+check_required_components(zRPC)
