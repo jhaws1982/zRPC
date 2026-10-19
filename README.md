@@ -106,6 +106,10 @@ and arm64 packages for every release.
   catch (const zRPC::TimeoutError &e) {}   // no reply in time
   catch (const zRPC::ProtocolError &e) {}  // corrupt or incompatible reply
   ```
+- Calls give up after the client's timeout (30 s unless the `Client` is built
+  with another). Pass a duration to time one call differently, e.g.
+  `client.call(500ms, "add", 2, 3)`, or `zRPC::kWaitForever` to wait
+  indefinitely. A call that times out may still run on the server.
 - Every request, reply and publication is a CRC-32 protected envelope
   `[version, status, payload, crc]`. The CRC detects accidental corruption,
   not tampering; use 0MQ CURVE security on untrusted networks.

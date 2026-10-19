@@ -39,7 +39,7 @@ public:
   MSGPACK_DEFINE(v)
 };
 
-void f4(zRPC::Client &client, int timeout)
+void f4(zRPC::Client &client, std::chrono::milliseconds timeout)
 {
   try
   {
@@ -62,7 +62,7 @@ int main(void)
   while (i < 100)
   {
     // Run f4 client with timeout enabled
-    int timeout = 100;  // 100ms
+    auto timeout = std::chrono::milliseconds(100);
     std::cout << "Call detached f4 thread number " << i << std::endl;
     std::thread(f4, std::ref(client), timeout).detach();
     std::this_thread::sleep_for(std::chrono::seconds(1));

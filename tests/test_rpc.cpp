@@ -149,6 +149,19 @@ static_assert(!std::is_copy_constructible_v<zRPC::Publisher>);
 static_assert(!std::is_copy_constructible_v<zRPC::Subscriber>);
 static_assert(!std::is_move_constructible_v<zRPC::Server>);
 
+// Timeouts are durations. An int timeout no longer compiles, so call(0, "x")
+// cannot be mistaken for an RPC named by a null pointer.
+template <typename C>
+concept TakesIntTimeout = requires(C &c) { c.call(100, std::string("x")); };
+template <typename C>
+concept TakesZeroAndName = requires(C &c) { c.call(0, "x"); };
+template <typename C>
+concept TakesDurationTimeout =
+    requires(C &c) { c.call(std::chrono::milliseconds(100), "x"); };
+static_assert(!TakesIntTimeout<zRPC::Client>);
+static_assert(!TakesZeroAndName<zRPC::Client>);
+static_assert(TakesDurationTimeout<zRPC::Client>);
+
 class Rpc : public ::testing::Test
 {
 protected:
@@ -182,7 +195,7 @@ protected:
   const Calculator m_constCalc{7};
   zRPC::Server m_srv{"tcp://127.0.0.1:*", 4};
   std::unique_ptr<RunningServer> m_run;
-  zRPC::Client m_client{"test", m_srv.endpoint(), 5000};
+  zRPC::Client m_client{"test", m_srv.endpoint(), 5000ms};
 };
 
 // ---------------------------------------------------------------------------
@@ -274,10 +287,16 @@ TEST_F(Rpc, ThrowingFunctionIsFailedAndServerKeepsServing)
   EXPECT_EQ(m_client.call("add", 1, 2).get().as<int>(), 3);
 }
 
+TEST_F(Rpc, AcceptsAnyDurationAsTimeout)
+{
+  EXPECT_EQ(m_client.call(2s, "add", 1, 2).get().as<int>(), 3);
+  EXPECT_EQ(m_client.call(zRPC::kWaitForever, "add", 1, 2).get().as<int>(), 3);
+}
+
 TEST_F(Rpc, TimeoutThrowsTimeoutError)
 {
   const auto start = Clock::now();
-  EXPECT_THROW(m_client.call(100, "sleep", 1000), zRPC::TimeoutError);
+  EXPECT_THROW(m_client.call(100ms, "sleep", 1000), zRPC::TimeoutError);
   EXPECT_LT(msSince(start), 900);
 }
 
@@ -292,7 +311,7 @@ TEST(RpcClient, NoServerTimesOutAndDestroysPromptly)
 
   const auto start = Clock::now();
   {
-    zRPC::Client client("lonely", endpoint, 200);
+    zRPC::Client client("lonely", endpoint, 200ms);
     EXPECT_THROW(client.call("anything"), zRPC::TimeoutError);
   }
   EXPECT_LT(msSince(start), 1500);
@@ -358,7 +377,7 @@ TEST(RpcServer, PortConstructorListensOnAllInterfaces)
   zRPC::Server srv(uint16_t{0}, 1);
   srv.bind("add", &add);
   RunningServer run(srv);
-  zRPC::Client client("port", connectable(srv.endpoint()), 5000);
+  zRPC::Client client("port", connectable(srv.endpoint()), 5000ms);
   EXPECT_EQ(client.call("add", 1, 2).get().as<int>(), 3);
 }
 
@@ -373,7 +392,7 @@ TEST(RpcServer, BuiltInTerminateNoLongerExists)
 {
   zRPC::Server srv("tcp://127.0.0.1:*", 1);
   RunningServer run(srv);
-  zRPC::Client client("c", srv.endpoint(), 5000);
+  zRPC::Client client("c", srv.endpoint(), 5000ms);
   EXPECT_EQ(remoteError([&]() { client.call("terminate"); }),
             ErrorCode::NotFound);
 }
@@ -384,7 +403,7 @@ TEST(RpcServer, StopFromABoundFunctionRepliesFirst)
   srv.bind("terminate", [&srv]() { srv.stop(); });
   auto stopped = std::async(std::launch::async, [&srv]() { srv.start(); });
 
-  zRPC::Client client("c", srv.endpoint(), 5000);
+  zRPC::Client client("c", srv.endpoint(), 5000ms);
   EXPECT_EQ(client.call("terminate").get().type, msgpack::type::NIL);
   EXPECT_EQ(stopped.wait_for(5s), std::future_status::ready);
 }
@@ -438,8 +457,8 @@ TEST_F(Rpc, OneClientFromManyThreads)
 TEST_F(Rpc, ClientsSharingAnIdentityDoNotCollide)
 {
   // Same identity, as two processes started with the same name would use
-  zRPC::Client a("same", m_srv.endpoint(), 5000);
-  zRPC::Client b("same", m_srv.endpoint(), 5000);
+  zRPC::Client a("same", m_srv.endpoint(), 5000ms);
+  zRPC::Client b("same", m_srv.endpoint(), 5000ms);
 
   auto slow = std::async(std::launch::async, [&a]()
                          { return a.call("sleep", 500).get().as<int>(); });
@@ -455,7 +474,7 @@ TEST(RpcLoadBalancing, FastCallIsNotQueuedBehindASlowOne)
   zRPC::Server srv("tcp://127.0.0.1:*", 2);
   srv.bind("sleep", &sleepFor);
   RunningServer run(srv);
-  zRPC::Client client("c", srv.endpoint(), 5000);
+  zRPC::Client client("c", srv.endpoint(), 5000ms);
 
   // With round-robin dealing, every second request queued behind the slow one
   auto slow = std::async(std::launch::async,
@@ -477,7 +496,7 @@ TEST(RpcLoadBalancing, AllWorkersAreUsedAndExtraCallsWaitForAFreeWorker)
   zRPC::Server srv("tcp://127.0.0.1:*", kWorkers);
   srv.bind("sleep", &sleepFor);
   RunningServer run(srv);
-  zRPC::Client client("c", srv.endpoint(), 10000);
+  zRPC::Client client("c", srv.endpoint(), 10000ms);
 
   auto timeCalls = [&](int calls)
   {
