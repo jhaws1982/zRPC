@@ -25,6 +25,11 @@
  * SOFTWARE.
  */
 
+#ifndef ZRPC_SUPPORT_HPP_
+#define ZRPC_SUPPORT_HPP_
+
+#include <cstddef>
+#include <tuple>
 #include <type_traits>
 
 namespace zRPC
@@ -148,3 +153,5 @@ using typeArgs = typename callable_traits<F>::type_args;
 
 }  // namespace support
 }  // namespace zRPC
+
+#endif  // ZRPC_SUPPORT_HPP_

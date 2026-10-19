@@ -27,11 +27,11 @@
 
 #include "zRPC.hpp"
 
-#include <csignal>
 #include <deque>
 #include <iostream>
 
-using namespace zRPC;
+namespace zRPC
+{
 
 namespace
 {
@@ -357,3 +357,5 @@ void Server::reply(zmq::socket_t &sock,
   (void)sock.send(zmq::const_buffer(res.data(), res.size()),
                   zmq::send_flags::none);
 }
+
+}  // namespace zRPC

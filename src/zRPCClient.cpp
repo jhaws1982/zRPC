@@ -27,7 +27,8 @@
 
 #include "zRPC.hpp"
 
-using namespace zRPC;
+namespace zRPC
+{
 
 Client::Client(const std::string &identity,
                const std::string &uri,
@@ -38,3 +39,5 @@ Client::Client(const std::string &identity,
     m_timeout(timeout)
 {
 }
+
+}  // namespace zRPC

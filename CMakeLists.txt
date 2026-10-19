@@ -170,7 +170,8 @@ if(ZRPC_BUILD_TESTS)
     find_package(GTest 1.14.0 REQUIRED)
   endif()
 
-  add_executable(zrpc_tests tests/test_protocol.cpp
+  add_executable(zrpc_tests tests/test_headers.cpp
+                            tests/test_protocol.cpp
                             tests/test_pubsub.cpp
                             tests/test_rpc.cpp
                 )

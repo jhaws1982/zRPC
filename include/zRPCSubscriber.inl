@@ -26,9 +26,6 @@
  */
 
 #include <iostream>
-#include "zRPC.hpp"
-
-using namespace zRPC;
 
 namespace zRPC
 {
