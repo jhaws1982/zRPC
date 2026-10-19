@@ -25,8 +25,8 @@
  * SOFTWARE.
  */
 
-#ifndef _ZRPC_HPP_
-#define _ZRPC_HPP_
+#ifndef ZRPC_HPP_
+#define ZRPC_HPP_
 
 #include <atomic>
 #include <cstdint>
@@ -669,4 +669,4 @@ public:
 #include "zRPCServer.inl"
 #include "zRPCSubscriber.inl"
 
-#endif  // _ZRPC_HPP_
+#endif  // ZRPC_HPP_

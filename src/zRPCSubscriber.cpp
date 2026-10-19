@@ -1,5 +1,5 @@
 /*
- * @file   zRPCSubscriber.inl
+ * @file   zRPCSubscriber.cpp
  * @author Jonathan Haws
  * @date   01-Apr-2022 10:31:18 am
  *
@@ -27,7 +27,8 @@
 
 #include "zRPC.hpp"
 
-using namespace zRPC;
+namespace zRPC
+{
 
 Subscriber::Subscriber() : m_ctx(1)
 {
@@ -48,3 +49,5 @@ Subscriber::~Subscriber()
     }
   }
 }
+
+}  // namespace zRPC

@@ -27,7 +27,8 @@
 
 #include "zRPC.hpp"
 
-using namespace zRPC;
+namespace zRPC
+{
 
 Publisher::Publisher(const uint16_t port) :
     Publisher("tcp://*:" + std::to_string(port))
@@ -47,3 +48,5 @@ const std::string &Publisher::endpoint(void) const noexcept
 {
   return m_endpoint;
 }
+
+}  // namespace zRPC
