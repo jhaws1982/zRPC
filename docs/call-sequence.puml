@@ -1,0 +1,45 @@
+@startuml call-sequence
+' One call, including a resend and a retry after a timeout. Render with:
+' java -jar plantuml.jar -tsvg docs/*.puml
+title A zRPC call
+skinparam shadowing false
+autonumber
+
+actor Application as app
+participant Client as client
+participant "Broker\n(+ CallMemory)" as broker
+participant Worker as worker
+participant "Bound\nfunction" as func
+
+app -> client : call(5s, "startJob", job)
+client -> client : new RequestId, seal\n[version, status, id, payload, crc]
+client -> broker : request (pooled connection)
+broker -> broker : peek id + CRC\nnew id: remember as running
+broker -> worker : request (idle worker only)
+worker -> worker : open envelope, check CRC,\nconvert arguments
+worker -> func : startJob(job)
+
+group no reply after the resend interval
+  client -> broker : same request again (same id)
+  broker -> broker : id running:\nreply to this connection too
+end
+
+func --> worker : result
+worker --> broker : reply [.., id, result, crc]
+broker -> broker : remember reply\n(5 min by default)
+broker --> client : reply
+client --> app : object_handle
+
+== Later: a call that timed out ==
+
+app -> client : call(e.requestId(), 30s, "startJob", job)
+client -> broker : request with the same id
+alt call still running
+  broker -> broker : wait for that run
+else call finished
+  broker --> client : stored reply
+else id never seen (or forgotten)
+  broker -> worker : run it now
+end
+client --> app : object_handle
+@enduml

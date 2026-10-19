@@ -145,10 +145,26 @@ and arm64 packages for every release.
   If clients should be able to stop the server, bind an RPC for it yourself:
   `srv.bind("terminate", [&srv]() { srv.stop(); });`
 
+## Design
+How a client, broker and workers fit together:
+
+![zRPC threads and sockets](docs/architecture.svg)
+
+One call, including a resend and a retry after a timeout:
+
+![A zRPC call](docs/call-sequence.svg)
+
+The public classes:
+
+![zRPC classes](docs/classes.svg)
+
+The diagrams are PlantUML sources in `docs/`. After editing one, regenerate
+the SVGs with `java -jar plantuml.jar -tsvg docs/*.puml` (Graphviz is needed
+for the class diagram).
+
 ## TODO
 - Subscribe to generic (untyped) data, e.g. by receiving a
   `msgpack::object_handle` instead of a fixed type
-- PlantUML class diagrams
 
 ## BUGS
 - None known.

@@ -1,0 +1,47 @@
+@startuml architecture
+' Threads and sockets inside a server and a client. Render with:
+' java -jar plantuml.jar -tsvg docs/*.puml
+title zRPC threads and sockets
+skinparam shadowing false
+skinparam componentStyle rectangle
+top to bottom direction
+
+rectangle "Client process" {
+  component "Client\npool of DEALER sockets,\none per concurrent call" as client
+}
+
+rectangle "Server process" {
+  component "Broker thread (Server::start)\nfrontend ROUTER, backend ROUTER" as broker
+  component "CallMemory\nrequest ID -> running call\nor finished reply" as memory
+  component "Worker 1\nDEALER" as w1
+  component "Worker N\nDEALER" as wn
+  component "Bound functions" as funcs
+}
+
+client --> broker : requests over TCP / IPC,\nresent under the same ID
+broker -right- memory
+broker --> w1 : only to an idle worker\n(inproc)
+broker --> wn
+w1 --> funcs
+wn --> funcs
+
+note right of client
+  Each call borrows an idle connection or opens
+  one, stamps a new RequestId, and resends an
+  unanswered request until its timeout.
+end note
+
+note bottom of memory
+  A resend of a running call waits for that run;
+  a resend of a finished call gets the stored
+  reply. Neither runs the function again.
+end note
+
+rectangle "Publisher process" {
+  component "Publisher\nPUB" as pub
+}
+rectangle "Subscriber process" {
+  component "Subscriber\none thread and SUB socket\nper subscription" as sub
+}
+pub --> sub : [topic][envelope]
+@enduml
