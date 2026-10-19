@@ -29,6 +29,7 @@
 #define ZRPC_HPP_
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -177,6 +178,14 @@ class ProtocolError : public Exception
 public:
   using Exception::Exception;
 };
+
+/**
+ * @brief Timeout that never expires
+ *
+ * A call made with it waits for its reply forever, so it hangs if the server
+ * is down.
+ */
+inline constexpr std::chrono::milliseconds kWaitForever{-1};
 
 /**
  * @class Server zRPC.hpp "zRPC.hpp"
@@ -442,9 +451,9 @@ private:
   std::string m_uri;
 
   /**
-   * @brief Timeout in ms used by calls that do not specify one (-1 = none)
+   * @brief Timeout used by calls that do not specify one
    */
-  int m_timeout;
+  std::chrono::milliseconds m_timeout;
 
 public:
   /**
@@ -456,13 +465,12 @@ public:
    *
    * @param[in] identity Name of the client, used in diagnostics.
    * @param[in] uri Zero-MQ address:port to bind listening socket to.
-   * @param[in] timeout Timeout in ms for calls that do not pass their own,
-   * default = 30 s. -1 waits forever, which hangs the call if the server is
-   * down.
+   * @param[in] timeout Timeout for calls that do not pass their own, default
+   * 30 s, or zRPC::kWaitForever.
    */
   explicit Client(const std::string &identity,
                   const std::string &uri,
-                  int timeout = 30000);
+                  std::chrono::milliseconds timeout = std::chrono::seconds(30));
 
   /**
    * @brief Call the RPC with the given name and given arguments, using the
@@ -487,8 +495,13 @@ public:
    * @note A request that times out may still have reached the server, which
    * then runs the RPC (with any side effects) and discards the reply.
    *
+   * @code
+   * using namespace std::chrono_literals;
+   * client.call(500ms, "add", 2, 3);
+   * @endcode
+   *
    * @tparam A Variadic argument list
-   * @param[in] timeout Timeout in ms before dropping the request, -1 = none
+   * @param[in] timeout Time to wait for the reply, or zRPC::kWaitForever
    * @param[in] name Name of the RPC to call on the remote server
    * @param[in] args Variadic argument list to pass to the remote server
    * @return msgpack::object_handle Value returned by the RPC (nil for a void
@@ -499,9 +512,21 @@ public:
    * @throws zmq::error_t on a 0MQ failure, e.g. an invalid URI
    */
   template <typename... A>
-  msgpack::object_handle call(const int timeout,
+  msgpack::object_handle call(std::chrono::milliseconds timeout,
                               const std::string &name,
                               A... args);
+
+  /**
+   * @brief Deleted: pass the timeout as a std::chrono duration, e.g. 500ms
+   *
+   * A plain integer timeout made `call(0, "name")` ambiguous, since 0 also
+   * converts to a std::string RPC name. Deleting this overload turns old
+   * `call(100, "name", ...)` code into a compile error instead.
+   */
+  template <typename... A>
+  msgpack::object_handle call(int timeout,
+                              const std::string &name,
+                              A... args) = delete;
 };
 
 /**

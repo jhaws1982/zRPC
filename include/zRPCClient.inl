@@ -34,13 +34,13 @@ msgpack::object_handle Client::call(const std::string &name, A... args)
 }
 
 template <typename... A>
-msgpack::object_handle Client::call(int timeout,
+msgpack::object_handle Client::call(std::chrono::milliseconds timeout,
                                     const std::string &name,
                                     A... args)
 {
   // Ensure socket is connected to the server
   zmq::socket_t l_sock(m_ctx, zmq::socket_type::dealer);
-  l_sock.set(zmq::sockopt::rcvtimeo, timeout);
+  l_sock.set(zmq::sockopt::rcvtimeo, detail::zmqTimeout(timeout));
   // Once the call returns nothing on this socket is worth delivering; an
   // unsent request after a timeout must not hold up closing the context
   l_sock.set(zmq::sockopt::linger, 0);
@@ -59,7 +59,8 @@ msgpack::object_handle Client::call(int timeout,
   if (!l_sock.recv(msg))
   {
     throw TimeoutError("zRPC client '" + m_identity + "': no reply to '" +
-                       name + "' within " + std::to_string(timeout) + " ms");
+                       name + "' within " + std::to_string(timeout.count()) +
+                       " ms");
   }
 
   auto reply = detail::open(msg.data(), msg.size());

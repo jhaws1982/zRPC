@@ -28,6 +28,8 @@
 #ifndef ZRPC_PROTOCOL_HPP_
 #define ZRPC_PROTOCOL_HPP_
 
+#include <chrono>
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 
@@ -79,6 +81,19 @@ inline msgpack::unpack_limit unpackLimits()
                                /* bin */ maxBytes,
                                /* ext */ maxBytes,
                                /* depth */ 16);
+}
+
+/**
+ * @brief Convert a timeout to 0MQ's form: int milliseconds, -1 = forever.
+ * Negative timeouts and any too long for an int (about 24 days) mean forever.
+ *
+ * @param[in] timeout Timeout to convert
+ * @return int Milliseconds for ZMQ_RCVTIMEO and similar options
+ */
+inline int zmqTimeout(std::chrono::milliseconds timeout)
+{
+  const auto ms = timeout.count();
+  return (ms < 0 || ms > INT_MAX) ? -1 : static_cast<int>(ms);
 }
 
 /**
